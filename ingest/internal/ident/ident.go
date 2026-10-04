@@ -334,3 +334,283 @@ func descriptorLike(seg string) bool {
 	}
 	return termRe.MatchString(l)
 }
+
+// nameEnd finds where a name stops inside a run of text: at the first field
+// label, instrument phrase or spaced dash, provided something precedes it.
+// It returns len(s) when nothing marks an end.
+func nameEnd(s string) int {
+	l := strings.ToLower(s)
+	best := len(s)
+	consider := func(phrase string, plural bool) {
+		for from := 0; ; {
+			i := strings.Index(l[from:], phrase)
+			if i < 0 {
+				return
+			}
+			i += from
+			tail := l[i+len(phrase):]
+			start := i == 0 || !isAlnum(l[i-1])
+			end := tail == "" || !isAlnum(tail[0]) || (plural && tail[0] == 's' && (len(tail) == 1 || !isAlnum(tail[1])))
+			// Whole words only, so "Sofranko" is not read as a SOFR margin
+			// and "Parexel" not as a par amount.
+			if start && end && i >= 2 {
+				if i < best {
+					best = i
+				}
+				return
+			}
+			from = i + 1
+		}
+	}
+	for _, p := range strong {
+		consider(p, true)
+	}
+	for _, p := range labels {
+		consider(p, false)
+	}
+	// "Acquisition" is a label only when a date follows it; "Investment" only
+	// when an instrument does. Otherwise both are words in a company's name.
+	for from := 0; ; {
+		i := strings.Index(l[from:], " acquisition ")
+		if i < 0 {
+			break
+		}
+		i += from
+		rest := strings.TrimLeft(l[i+len(" acquisition "):], " ")
+		if i >= 2 && rest != "" && rest[0] >= '0' && rest[0] <= '9' {
+			if i < best {
+				best = i
+			}
+			break
+		}
+		from = i + 1
+	}
+	for from := 0; ; {
+		i := strings.Index(l[from:], " investment ")
+		if i < 0 {
+			break
+		}
+		i += from
+		next := strings.Fields(l[i+len(" investment "):])
+		if i >= 2 && len(next) > 0 && investmentNext[strings.Trim(next[0], ",.-/")] {
+			if i < best {
+				best = i
+			}
+			break
+		}
+		from = i + 1
+	}
+	if m := dashRe.FindStringIndex(s); m != nil && m[0] >= 2 && m[0] < best {
+		best = m[0]
+	}
+	return best
+}
+
+// stripHeadings peels headings, a country and an industry off the front of a
+// run-together identifier, leaving it starting at the name.
+func stripHeadings(s, holder string) (rest, industry string) {
+	// Percentage headings nest ("Debt Investments - 179% United States - 161%
+	// 1st Lien - 155% Acme"); the name follows the last of them.
+	if m := headingRe.FindAllStringIndex(s, -1); m != nil {
+		s = s[m[len(m)-1][1]:]
+	}
+	// "Acme Credit Subsidiary, LLC BANK LOANS: NON-CONTROL/NON-AFFILIATE
+	// INVESTMENTS Capital Equipment Borrower Co": the borrower follows the
+	// last such heading, whatever entity is named before it.
+	if m := midHeadingRe.FindAllStringIndex(s, -1); m != nil && m[len(m)-1][1] < len(s) {
+		s = s[m[len(m)-1][1]:]
+	}
+	stripped := false
+	for changed := true; changed; {
+		changed = false
+		s = strings.TrimSpace(s)
+		for _, re := range prefixRes {
+			if m := re.FindStringIndex(s); m != nil && m[1] > 0 && m[1] < len(s) {
+				s = s[m[1]:]
+				changed, stripped = true, true
+				break
+			}
+		}
+		if changed {
+			continue
+		}
+		// Some filers print their own name as a heading above the schedule.
+		// EDGAR records it in capitals and without the commas, so compare
+		// word by word.
+		if hw := words(holder); len(hw) > 0 {
+			sw := words(s)
+			same := len(sw) > len(hw)
+			for i := 0; same && i < len(hw); i++ {
+				same = sw[i] == hw[i]
+			}
+			if same {
+				ends := wordEnds(s, len(hw))
+				s = s[ends[len(ends)-1]:]
+				changed, stripped = true, true
+				continue
+			}
+		}
+		if stripped {
+			if m := countryRe.FindStringIndex(s); m != nil && m[1] < len(s) {
+				s = s[m[1]:]
+				changed = true
+			}
+		}
+	}
+	if rest, ok := stripIndustry(s); ok {
+		industry = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), rest))
+		s = rest
+		// A heading can follow the industry too: "... Software Common Stock Acme".
+		for changed := true; changed; {
+			changed = false
+			for _, re := range prefixRes {
+				if m := re.FindStringIndex(s); m != nil && m[1] > 0 && m[1] < len(s) {
+					s = strings.TrimSpace(s[m[1]:])
+					changed = true
+					break
+				}
+			}
+		}
+	}
+	return strings.TrimSpace(s), strings.Trim(industry, " ,:-")
+}
+
+// dedupe drops a short name repeated in front of the legal name, as in
+// "Accel International Accel International Holdings, LLC".
+func dedupe(name string) string {
+	f := strings.Fields(name)
+	for k := len(f) / 2; k >= 1; k-- {
+		same := true
+		for i := 0; i < k; i++ {
+			if !strings.EqualFold(strings.Trim(f[i], ",."), strings.Trim(f[k+i], ",.")) {
+				same = false
+				break
+			}
+		}
+		if same {
+			return strings.Join(f[k:], " ")
+		}
+	}
+	return name
+}
+
+// tidy finishes a name: drops footnotes, a trailing position number and
+// stray punctuation, and moves a parenthesised short name to the aliases.
+const debtHeading = "debt investments"
+
+// TrimLabels cuts a column label, and whatever follows it, off the end of a
+// name: "Acme, LLC Acquisition Date 03/30/21" is "Acme, LLC".
+func TrimLabels(name string) string {
+	return strings.TrimSpace(acquiredRe.ReplaceAllString(name, ""))
+}
+
+func tidy(name string, p *Parsed) string {
+	// A stray mark and a section heading before the name, and a date after it.
+	name = strings.TrimLeft(name, "?*• 	")
+	// "... Debt Investments Technology Hardware & Equipment Brivo, Inc.": one
+	// filer runs the schedule's headings, the country and the industry into
+	// the name. The name is what follows the last of them.
+	if i := strings.LastIndex(strings.ToLower(name), debtHeading); i >= 0 {
+		name = strings.TrimSpace(name[i+len(debtHeading):])
+		name = strings.TrimSpace(strings.TrimPrefix(name, "United States"))
+		if rest, ok := stripIndustry(name); ok {
+			name = rest
+		}
+	}
+	name = acquiredRe.ReplaceAllString(name, "")
+	for _, m := range aliasRe.FindAllStringSubmatch(name, -1) {
+		if a := strings.TrimSpace(m[1]); a != "" {
+			p.Aliases = append(p.Aliases, a)
+		}
+	}
+	name = aliasRe.ReplaceAllString(name, "")
+	name = footRe.ReplaceAllString(name, "")
+	if m := inlineAliasRe.FindStringSubmatch(name); m != nil {
+		p.Aliases = append(p.Aliases, strings.TrimSpace(m[1]))
+		name = inlineAliasRe.ReplaceAllString(name, "")
+	}
+	for _, m := range parenRe.FindAllStringSubmatch(name, -1) {
+		inner := strings.TrimSpace(m[1])
+		// "(Delayed Draw)" describes the facility; "(Fairbanks Morse)" is
+		// what the borrower is known as.
+		if inner != "" && !descriptorLike(inner) && !isDigits(inner) {
+			p.Aliases = append(p.Aliases, inner)
+		}
+	}
+	name = parenRe.ReplaceAllString(name, "")
+	name = openParenRe.ReplaceAllString(name, "")
+	name = spaceRe.ReplaceAllString(strings.TrimSpace(name), " ")
+	// The cut can land inside a parenthesis: "Acme LLC (Delayed Draw)".
+	name = strings.TrimRight(name, ",-:;/( ")
+	for {
+		before := name
+		if strings.Count(name, " ") >= 1 {
+			name = indexRe.ReplaceAllString(name, "")
+			name = spelledRe.ReplaceAllString(name, "")
+			name = trailingRe.ReplaceAllString(name, "")
+		}
+		name = strings.TrimRight(name, ",-:;/( ")
+		if name == before {
+			break
+		}
+	}
+	return dedupe(name)
+}
+
+// Parse extracts the borrower and instrument class from an identifier. The
+// typeAxis argument is the Investment Type axis member for the same row.
+func Parse(identifier, typeAxis string) Parsed {
+	return ParseFor(identifier, typeAxis, "")
+}
+
+// ParseFor is Parse for a known registrant, whose own name some filers print
+// as a heading inside each identifier.
+func ParseFor(identifier, typeAxis, holder string) Parsed {
+	s := spaceRe.ReplaceAllString(strings.TrimSpace(identifier), " ")
+	s = strings.TrimSpace(strings.Trim(s, `"'`))
+
+	var p Parsed
+	p.Unfunded = unfundedRe.MatchString(s)
+	for _, m := range aliasRe.FindAllStringSubmatch(s, -1) {
+		if a := strings.TrimSpace(m[1]); a != "" {
+			p.Aliases = append(p.Aliases, a)
+		}
+	}
+	s = spaceRe.ReplaceAllString(aliasRe.ReplaceAllString(s, ""), " ")
+	s = strings.ReplaceAll(s, " ,", ",")
+	s = gluedRe.ReplaceAllString(s, "$1 $2")
+	s = runOnHeadingRe.ReplaceAllString(s, "$1 $2")
+	name := ""
+
+	switch {
+	case strings.Contains(s, "|"):
+		name, p.Industry = fromSegments(pipeRe.Split(s, -1), holder)
+	case strings.Contains(strings.ToLower(s), "issuer name "):
+		// "First Lien Secured Debt Issuer Name Acme, LLC Acquisition ..."
+		i := strings.Index(strings.ToLower(s), "issuer name ") + len("issuer name ")
+		rest := s[i:]
+		name = rest[:nameEnd(rest)]
+	case headingStart.MatchString(s) || headingRe.MatchString(s) || midHeadingRe.MatchString(s) || hasLabel(s):
+		var rest string
+		rest, p.Industry = stripHeadings(s, holder)
+		name = rest[:nameEnd(rest)]
+	default:
+		name, p.Industry = fromCommas(s)
+	}
+
+	p.Borrower = tidy(name, &p)
+	p.Descriptor = s
+	if p.Borrower != "" {
+		if i := strings.Index(s, p.Borrower); i >= 0 {
+			p.Descriptor = strings.TrimSpace(s[:i] + " " + s[i+len(p.Borrower):])
+		}
+	}
+	p.Lien, p.Facility = Classify(typeAxis, p.Descriptor)
+	// A securitisation or a joint venture is recognisable from its name alone.
+	lower := strings.ToLower(p.Borrower)
+	if hasWord(lower, "clo") || hasWord(lower, "jv") || strings.Contains(lower, "senior loan program") ||
+		strings.Contains(lower, "senior loan fund") || strings.Contains(lower, "joint venture") {
+		p.Lien = Structured
+	}
+	return p
+}

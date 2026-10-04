@@ -614,3 +614,191 @@ func ParseFor(identifier, typeAxis, holder string) Parsed {
 	}
 	return p
 }
+
+// hasLabel reports whether an identifier carries field labels, which only
+// the run-together family does.
+func hasLabel(s string) bool {
+	l := strings.ToLower(s)
+	for _, x := range []string{" asset type ", " investment type ", " type of investment ", " instrument ", " reference rate", " maturity date ", " interest rate "} {
+		if strings.Contains(l, x) {
+			return true
+		}
+	}
+	return false
+}
+
+// fromSegments picks the name out of delimited segments. Headings, industry
+// labels and terms are passed over; of what remains, the first segment is
+// the name unless a later one is plainly a company and it is not.
+func fromSegments(segs []string, holder string) (name, industry string) {
+	pick, picked, settled := "", false, false
+	for _, seg := range segs {
+		seg = strings.TrimSpace(seg)
+		if seg == "" || isBoilerplate(seg) {
+			continue
+		}
+		if isIndustry(seg) {
+			if industry == "" {
+				industry = indexRe.ReplaceAllString(seg, "")
+			}
+			continue
+		}
+		if settled {
+			continue // the name is decided; only an industry is still wanted
+		}
+		head := seg
+		if headingStart.MatchString(seg) {
+			head, _ = stripHeadings(seg, holder)
+		}
+		head = strings.TrimSpace(head[:nameEnd(head)])
+		if head == "" || isBoilerplate(head) || isIndustry(head) || termRe.MatchString(head) {
+			continue
+		}
+		if !picked {
+			pick, picked = head, true
+			settled = hasCompanyWord(head)
+			continue
+		}
+		if hasCompanyWord(head) {
+			pick, settled = head, true
+		}
+	}
+	return pick, industry
+}
+
+// fromCommas reads the common grammar, "Name, instrument, terms". The name is
+// the first segment plus any bare legal suffix that follows it.
+//
+// A few filers lead with the facility and the country instead ("Term Loan,
+// United States of America, Acme LLC, Healthcare, Rate S+7%"). Leading
+// segments that are plainly not a company are passed over, provided a later
+// one plainly is.
+func fromCommas(s string) (name, industry string) {
+	segs := strings.Split(s, ",")
+	for i := range segs {
+		segs[i] = strings.TrimSpace(segs[i])
+	}
+	// "LLC 1": a legal suffix can carry the filer's position number.
+	suffix := func(seg string) bool {
+		return legalSuffix[strings.ToLower(indexRe.ReplaceAllString(seg, ""))]
+	}
+	company := func(i int) bool {
+		return hasCompanyWord(segs[i]) || (i+1 < len(segs) && suffix(segs[i+1]))
+	}
+	// Only a segment with no company in it at all is passed over: a heading,
+	// a country, an industry, or an instrument with nothing else ("Term
+	// Loan"). "Opal Facility Services" has an instrument word in it and is
+	// still a name.
+	notName := func(i int) bool {
+		seg := segs[i]
+		return isBoilerplate(seg) || isIndustry(seg) || countryRe.MatchString(seg) ||
+			strings.HasPrefix(strings.ToLower(seg), "united states") || Parsed{Borrower: seg}.Nameless()
+	}
+	first := 0
+	if notName(0) {
+		for i := 1; i < len(segs) && i <= 3; i++ {
+			if !notName(i) && company(i) {
+				first = i
+				break
+			}
+		}
+	}
+	for _, seg := range segs[first+1:] {
+		if isIndustry(seg) {
+			industry = seg
+			break
+		}
+	}
+	end := first + 1
+	for end < len(segs) && suffix(segs[end]) {
+		end++
+	}
+	// "Smith, Jones & Partners, LLC": a legal suffix further on means the
+	// segments before it are still the name.
+	for j := end; j < len(segs) && j <= end+1; j++ {
+		if suffix(segs[j]) && !descriptorLike(segs[end]) {
+			end = j + 1
+			break
+		}
+	}
+	name = strings.Join(segs[first:end], ", ")
+	// Filers that never use commas leave the whole identifier in one piece.
+	if end == first+1 {
+		name = name[:nameEnd(name)]
+	}
+	return name, industry
+}
+
+// Classify reads seniority and facility type from the type axis and the
+// descriptor. The type axis wins on seniority; the descriptor is consulted
+// for whatever the axis leaves open.
+func Classify(typeAxis, descriptor string) (Lien, Facility) {
+	t := strings.ToLower(camelSplit(typeAxis))
+	d := strings.ToLower(descriptor)
+
+	lien := lienOf(t)
+	if lien == LienUnknown {
+		lien = lienOf(d)
+	}
+
+	both := t + " " + d
+	fac := Term
+	switch {
+	case strings.Contains(both, "revolv"):
+		fac = Revolver
+	case strings.Contains(both, "delayed draw"), strings.Contains(both, "delay draw"), hasWord(both, "ddtl"):
+		fac = DelayedDraw
+	}
+	return lien, fac
+}
+
+func lienOf(s string) Lien {
+	if s == "" {
+		return LienUnknown
+	}
+	has := func(subs ...string) bool {
+		for _, x := range subs {
+			if strings.Contains(s, x) {
+				return true
+			}
+		}
+		return false
+	}
+	// Order matters. "unsecured notes" contains "secured note", so the junior
+	// classes are tested before the senior ones they would otherwise match.
+	switch {
+	case hasWord(s, "clo"), has("collateralized loan", "collaterized loan", "loan obligation", "structured", "joint venture",
+		"investment fund", "senior loan fund", "private fund", "money market", "cash equivalent", "derivative"):
+		return Structured
+	case has("second lien", "second-lien", "2nd lien", "junior secured", "junior lien", "junior loan", "third lien"):
+		return SecondLien
+	case has("unitranche", "one stop", "last out", "last-out", "first out"):
+		return Unitranche
+	case has("subordinated", "mezzanine", "unsecured"):
+		return Subordinated
+	case has("first lien", "first-lien", "1st lien", "senior secured", "secured debt", "secured loan", "secured note", "senior loan"):
+		return FirstLien
+	case has("junior"):
+		return Subordinated
+	case has("equity", "common", "preferred", "warrant", "units", "shares", "stock",
+		"membership", "partnership interest", "lp interest", "llc interest", "partner interest"):
+		return Equity
+	}
+	return LienUnknown
+}
+
+// camelSplit turns an XBRL member name such as "DebtSecuritiesFirstLienMember"
+// into spaced words so phrase matching works on it.
+func camelSplit(s string) string {
+	var b strings.Builder
+	for i, r := range s {
+		if i > 0 && r >= 'A' && r <= 'Z' {
+			prev := rune(s[i-1])
+			if prev >= 'a' && prev <= 'z' {
+				b.WriteByte(' ')
+			}
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}

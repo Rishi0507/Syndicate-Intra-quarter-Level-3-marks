@@ -227,3 +227,151 @@ var generic = set("group", "capital", "health", "care", "service", "solution", "
 	"technology", "partner", "international", "global", "american", "national", "us",
 	"management", "financial", "medical", "software", "industry", "product", "enterprise",
 	"network", "resource", "energy", "media", "consulting", "project", "investment", "holding")
+
+// Resolve clusters every name added so far. It returns the cluster index for
+// each name, the clusters, and a breakdown of which rule made each merge.
+func (r *Resolver) Resolve() (map[string]int, []Cluster, Report) {
+	ms := r.order
+	uf := newUF(len(ms))
+	rep := Report{Mentions: len(ms)}
+
+	// 1. Identical once legal form is removed.
+	first := map[string]int{}
+	for i, m := range ms {
+		if m.strict == "" {
+			continue
+		}
+		if j, ok := first[m.strict]; ok {
+			if uf.union(i, j) {
+				rep.ByStrict++
+			}
+		} else {
+			first[m.strict] = i
+		}
+	}
+
+	// 2. Identical once deal-structure words are removed. A multi-word core is
+	// trusted outright. A single word ("summit") is common enough across
+	// unrelated companies that it needs matching loan terms as well.
+	groups := map[string][]int{}
+	for i, m := range ms {
+		if m.coreKey != "" {
+			groups[m.coreKey] = append(groups[m.coreKey], i)
+		}
+	}
+	for _, g := range groups {
+		if len(g) < 2 {
+			continue
+		}
+		if len(ms[g[0]].core) >= 2 {
+			for _, i := range g[1:] {
+				if uf.union(g[0], i) {
+					rep.ByCore++
+				}
+			}
+			continue
+		}
+		byTerm := map[TermKey]int{}
+		for _, i := range g {
+			for t := range ms[i].terms {
+				if j, ok := byTerm[t]; ok {
+					if uf.union(i, j) {
+						rep.ByCoreTerms++
+					}
+				} else {
+					byTerm[t] = i
+				}
+			}
+		}
+	}
+
+	// 3. A disclosed alias ("dba", "fka") that names another cluster.
+	for i, m := range ms {
+		for _, a := range m.aliases {
+			toks := CoreTokens(a)
+			g, ok := groups[strings.Join(toks, " ")]
+			if !ok {
+				continue
+			}
+			for _, j := range g {
+				if len(toks) >= 2 || sharesTerm(m, ms[j]) {
+					if uf.union(i, j) {
+						rep.ByAlias++
+					}
+				}
+			}
+		}
+	}
+
+	// 4. Similar names on loans with identical terms. Two lenders in one loan
+	// report the same maturity month and margin, so candidates are found by
+	// those terms and not by how the name happens to start: one lender's
+	// "Legacy.com Lotus Topco" is another's "Lotus Topco".
+	blocks := map[TermKey][]int{}
+	for i, m := range ms {
+		for t := range m.terms {
+			blocks[t] = append(blocks[t], i)
+		}
+	}
+	keys := make([]TermKey, 0, len(blocks))
+	for t := range blocks {
+		keys = append(keys, t)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	for _, t := range keys {
+		b := blocks[t]
+		if len(b) > maxBlock {
+			rep.OversizeBlock++
+			continue
+		}
+		sort.Ints(b)
+		for x := 0; x < len(b); x++ {
+			for y := x + 1; y < len(b); y++ {
+				i, j := b[x], b[y]
+				if uf.find(i) == uf.find(j) {
+					continue
+				}
+				if similar(ms[i].core, ms[j].core) {
+					if uf.union(i, j) {
+						rep.ByFuzzyTerms++
+					}
+				}
+			}
+		}
+	}
+
+	// Assemble clusters in a stable order: by first appearance of their root.
+	rootID := map[int]int{}
+	var clusters []Cluster
+	best := []float64{}
+	holders := []map[string]struct{}{}
+	assign := make(map[string]int, len(ms))
+	for i, m := range ms {
+		root := uf.find(i)
+		id, ok := rootID[root]
+		if !ok {
+			id = len(clusters)
+			rootID[root] = id
+			clusters = append(clusters, Cluster{ID: id})
+			best = append(best, -1)
+			holders = append(holders, map[string]struct{}{})
+		}
+		c := &clusters[id]
+		c.Members = append(c.Members, m.name)
+		if m.weight > best[id] {
+			best[id] = m.weight
+			c.Name = m.name
+			c.Key = m.coreKey
+		}
+		for h := range m.holders {
+			holders[id][h] = struct{}{}
+		}
+		assign[m.name] = id
+	}
+	for i := range clusters {
+		sort.Strings(clusters[i].Members)
+		clusters[i].Holders = len(holders[i])
+	}
+	rep.Clusters = len(clusters)
+	return assign, clusters, rep
+}

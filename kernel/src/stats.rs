@@ -387,3 +387,80 @@ impl Rng {
         -self.uniform().ln()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normal_cdf_matches_known_values() {
+        let cases = [
+            (0.0, 0.5),
+            (1.0, 0.841_344_746_068_542_9),
+            (-1.0, 0.158_655_253_931_457_05),
+            (1.959_963_984_540_054, 0.975),
+            (-3.0, 0.001_349_898_031_630_094_6),
+            (5.0, 0.999_999_713_348_428_1),
+            (-8.0, 6.220_960_574_271_785e-16),
+        ];
+        for (x, want) in cases {
+            let got = norm_cdf(x);
+            assert!((got - want).abs() <= 1e-13 * want.max(1e-3), "cdf({x}) = {got}, want {want}");
+        }
+    }
+
+    #[test]
+    fn normal_inverse_round_trips() {
+        for &p in &[1e-10, 1e-4, 0.01, 0.025, 0.2, 0.5, 0.8, 0.975, 0.9999, 1.0 - 1e-10] {
+            let x = norm_inv(p);
+            assert!((norm_cdf(x) - p).abs() < 1e-12 * p.max(1e-3), "p = {p}");
+        }
+        assert!((norm_inv(0.975) - 1.959_963_984_540_054).abs() < 1e-12);
+    }
+
+    #[test]
+    fn quantiles_interpolate() {
+        let mut v = vec![4.0, 1.0, 3.0, 2.0];
+        assert_eq!(quantile(&mut v, 0.5), 2.5);
+        assert_eq!(quantile(&mut v, 0.0), 1.0);
+        assert_eq!(quantile(&mut v, 1.0), 4.0);
+    }
+
+    #[test]
+    fn ols_recovers_a_line() {
+        let mut o = Ols::new(2);
+        for i in 0..50 {
+            let x = i as f64 / 10.0;
+            o.add(&[1.0, x], 3.0 - 2.0 * x, 1.0);
+        }
+        let (b, sse) = o.solve().unwrap();
+        // The ridge leaves a residual of order 1e-12 times the squared coefficients.
+        assert!((b[0] - 3.0).abs() < 1e-8 && (b[1] + 2.0).abs() < 1e-8 && sse < 1e-6, "{b:?} {sse}");
+    }
+
+    #[test]
+    fn rng_is_standard_normal() {
+        let mut r = Rng::new(7);
+        let n = 200_000;
+        let (mut s, mut ss, mut k) = (0.0, 0.0, 0.0);
+        for _ in 0..n {
+            let z = r.normal();
+            s += z;
+            ss += z * z;
+            k += z * z * z * z;
+        }
+        let nf = n as f64;
+        assert!((s / nf).abs() < 0.01);
+        assert!((ss / nf - 1.0).abs() < 0.01);
+        assert!((k / nf - 3.0).abs() < 0.05);
+    }
+
+    #[test]
+    fn rng_is_reproducible() {
+        let mut a = Rng::new(42);
+        let mut b = Rng::new(42);
+        for _ in 0..100 {
+            assert_eq!(a.next_u64(), b.next_u64());
+        }
+    }
+}

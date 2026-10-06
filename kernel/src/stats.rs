@@ -156,3 +156,234 @@ pub fn norm_inv(p: f64) -> f64 {
     let u = e / norm_pdf(x);
     x - u / (1.0 + 0.5 * x * u)
 }
+
+/// Linear-interpolated quantile of a slice. Sorts the slice in place.
+pub fn quantile(xs: &mut [f64], p: f64) -> f64 {
+    if xs.is_empty() {
+        return f64::NAN;
+    }
+    xs.sort_by(|a, b| a.total_cmp(b));
+    quantile_sorted(xs, p)
+}
+
+/// Linear-interpolated quantile of an already sorted slice.
+pub fn quantile_sorted(xs: &[f64], p: f64) -> f64 {
+    if xs.is_empty() {
+        return f64::NAN;
+    }
+    let h = p.clamp(0.0, 1.0) * (xs.len() - 1) as f64;
+    let lo = h.floor() as usize;
+    let hi = (lo + 1).min(xs.len() - 1);
+    xs[lo] + (h - lo as f64) * (xs[hi] - xs[lo])
+}
+
+pub fn median(xs: &mut [f64]) -> f64 {
+    quantile(xs, 0.5)
+}
+
+pub fn mean(xs: &[f64]) -> f64 {
+    if xs.is_empty() {
+        return f64::NAN;
+    }
+    xs.iter().sum::<f64>() / xs.len() as f64
+}
+
+/// Median absolute deviation scaled to estimate a normal standard deviation.
+pub fn mad_sigma(xs: &[f64]) -> f64 {
+    if xs.is_empty() {
+        return f64::NAN;
+    }
+    let mut v = xs.to_vec();
+    let m = median(&mut v);
+    for x in v.iter_mut() {
+        *x = (*x - m).abs();
+    }
+    1.482_602_218_505_602 * median(&mut v)
+}
+
+/// Variance after clamping to the `p` and `1 - p` quantiles. A compromise
+/// between the MAD, which ignores the tails that matter for credit, and the
+/// raw variance, which a handful of defaults would dominate.
+pub fn winsor_var(xs: &[f64], p: f64) -> f64 {
+    if xs.len() < 2 {
+        return f64::NAN;
+    }
+    let mut v = xs.to_vec();
+    v.sort_by(|a, b| a.total_cmp(b));
+    let lo = quantile_sorted(&v, p);
+    let hi = quantile_sorted(&v, 1.0 - p);
+    let n = v.len() as f64;
+    let mut s = 0.0;
+    let mut ss = 0.0;
+    for x in &v {
+        let c = x.clamp(lo, hi);
+        s += c;
+        ss += c * c;
+    }
+    (ss - s * s / n) / (n - 1.0)
+}
+
+/// Solves the symmetric positive definite system `A x = b` in place by
+/// Cholesky factorisation. `a` is row-major `n` by `n`. Returns false if the
+/// matrix is not positive definite.
+pub fn solve_spd(a: &mut [f64], b: &mut [f64], n: usize) -> bool {
+    for j in 0..n {
+        let mut d = a[j * n + j];
+        for k in 0..j {
+            d -= a[j * n + k] * a[j * n + k];
+        }
+        if d <= 0.0 || !d.is_finite() {
+            return false;
+        }
+        let d = d.sqrt();
+        a[j * n + j] = d;
+        for i in (j + 1)..n {
+            let mut s = a[i * n + j];
+            for k in 0..j {
+                s -= a[i * n + k] * a[j * n + k];
+            }
+            a[i * n + j] = s / d;
+        }
+    }
+    for i in 0..n {
+        let mut s = b[i];
+        for k in 0..i {
+            s -= a[i * n + k] * b[k];
+        }
+        b[i] = s / a[i * n + i];
+    }
+    for i in (0..n).rev() {
+        let mut s = b[i];
+        for k in (i + 1)..n {
+            s -= a[k * n + i] * b[k];
+        }
+        b[i] = s / a[i * n + i];
+    }
+    true
+}
+
+/// Accumulates the normal equations of a least squares problem one row at a
+/// time, so a regression over millions of observations needs only `k` squared
+/// numbers of state.
+pub struct Ols {
+    k: usize,
+    xtx: Vec<f64>,
+    xty: Vec<f64>,
+    pub n: f64,
+    pub yy: f64,
+}
+
+impl Ols {
+    pub fn new(k: usize) -> Self {
+        Ols { k, xtx: vec![0.0; k * k], xty: vec![0.0; k], n: 0.0, yy: 0.0 }
+    }
+
+    pub fn add(&mut self, x: &[f64], y: f64, w: f64) {
+        for i in 0..self.k {
+            let wi = w * x[i];
+            self.xty[i] += wi * y;
+            for j in 0..=i {
+                self.xtx[i * self.k + j] += wi * x[j];
+            }
+        }
+        self.n += w;
+        self.yy += w * y * y;
+    }
+
+    /// The same regression with another's observations taken out.
+    pub fn without(&self, other: &Ols) -> Ols {
+        let mut o = Ols { k: self.k, xtx: self.xtx.clone(), xty: self.xty.clone(), n: self.n - other.n, yy: self.yy - other.yy };
+        for (a, b) in o.xtx.iter_mut().zip(&other.xtx) {
+            *a -= b;
+        }
+        for (a, b) in o.xty.iter_mut().zip(&other.xty) {
+            *a -= b;
+        }
+        o
+    }
+
+    /// Returns the coefficients and the weighted residual sum of squares. A
+    /// small ridge keeps a rank-deficient design solvable; the coefficients on
+    /// its redundant columns then shrink to zero, which is the wanted answer.
+    pub fn solve(&self) -> Option<(Vec<f64>, f64)> {
+        let k = self.k;
+        let mut a = vec![0.0; k * k];
+        for i in 0..k {
+            for j in 0..=i {
+                a[i * k + j] = self.xtx[i * k + j];
+                a[j * k + i] = self.xtx[i * k + j];
+            }
+            a[i * k + i] += 1e-12 * (1.0 + self.xtx[i * k + i]);
+        }
+        let mut b = self.xty.clone();
+        if !solve_spd(&mut a, &mut b, k) {
+            return None;
+        }
+        let mut sse = self.yy;
+        for i in 0..k {
+            sse -= b[i] * self.xty[i];
+        }
+        Some((b, sse.max(0.0)))
+    }
+}
+
+/// xoshiro256** seeded through splitmix64. Deterministic across platforms,
+/// which the standard library's generator does not promise.
+#[derive(Clone)]
+pub struct Rng {
+    s: [u64; 4],
+    spare: Option<f64>,
+}
+
+impl Rng {
+    pub fn new(seed: u64) -> Self {
+        let mut z = seed;
+        let mut next = || {
+            z = z.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut x = z;
+            x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            x ^ (x >> 31)
+        };
+        Rng { s: [next(), next(), next(), next()], spare: None }
+    }
+
+    pub fn next_u64(&mut self) -> u64 {
+        let r = self.s[1].wrapping_mul(5).rotate_left(7).wrapping_mul(9);
+        let t = self.s[1] << 17;
+        self.s[2] ^= self.s[0];
+        self.s[3] ^= self.s[1];
+        self.s[1] ^= self.s[2];
+        self.s[0] ^= self.s[3];
+        self.s[2] ^= t;
+        self.s[3] = self.s[3].rotate_left(45);
+        r
+    }
+
+    /// Uniform on the open interval (0, 1).
+    pub fn uniform(&mut self) -> f64 {
+        ((self.next_u64() >> 11) as f64 + 0.5) / (1u64 << 53) as f64
+    }
+
+    /// Standard normal by the polar Box-Muller method.
+    pub fn normal(&mut self) -> f64 {
+        if let Some(z) = self.spare.take() {
+            return z;
+        }
+        loop {
+            let u = 2.0 * self.uniform() - 1.0;
+            let v = 2.0 * self.uniform() - 1.0;
+            let s = u * u + v * v;
+            if s > 0.0 && s < 1.0 {
+                let m = (-2.0 * s.ln() / s).sqrt();
+                self.spare = Some(v * m);
+                return u * m;
+            }
+        }
+    }
+
+    /// Exponential with unit rate.
+    pub fn exponential(&mut self) -> f64 {
+        -self.uniform().ln()
+    }
+}

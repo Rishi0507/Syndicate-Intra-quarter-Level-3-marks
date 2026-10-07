@@ -345,3 +345,32 @@ impl Panel {
         &self.obs[a..b]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn table_parses_named_columns() {
+        let t = Table::parse("a\tb\tc\n1\t2.5\tx\n\n3\t\ty\n");
+        assert_eq!(t.len(), 2);
+        assert_eq!(t.int(0, t.col("a").unwrap()), 1);
+        assert_eq!(t.num(0, t.col("b").unwrap()), 2.5);
+        assert!(t.num(1, t.col("b").unwrap()).is_nan());
+        assert_eq!(t.str(1, t.col("c").unwrap()), "y");
+        assert!(t.col("z").is_err());
+    }
+
+    #[test]
+    fn serial_counts_days() {
+        assert_eq!(serial(20240301) - serial(20240228), 2); // leap year
+        assert_eq!(serial(20230301) - serial(20230228), 1);
+        assert_eq!(serial(20260101) - serial(20250101), 365);
+    }
+
+    #[test]
+    fn quarters_are_three_months_apart() {
+        assert_eq!(year_month(20240331) - year_month(20231231), 3);
+        assert!(is_calendar_quarter(20240630) && !is_calendar_quarter(20240531));
+    }
+}

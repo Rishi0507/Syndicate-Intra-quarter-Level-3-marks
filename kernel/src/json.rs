@@ -150,3 +150,24 @@ impl From<Vec<Json>> for Json {
         Json::Arr(x)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn writes_nested_values() {
+        let j = Json::obj()
+            .with("a", 1usize)
+            .with("b", Json::round(1.23456, 2))
+            .with("c", "x\"y\n")
+            .with("d", Json::Arr(vec![Json::Null, true.into(), f64::NAN.into()]));
+        assert_eq!(j.to_string(), r#"{"a":1,"b":1.23,"c":"x\"y\n","d":[null,true,null]}"#);
+    }
+
+    #[test]
+    fn whole_numbers_have_no_fraction() {
+        assert_eq!(Json::Num(3.0).to_string(), "3");
+        assert_eq!(Json::Num(-0.5).to_string(), "-0.5");
+    }
+}

@@ -302,3 +302,159 @@ func (g *gen) makeBorrowers() {
 		g.truth.Core = append(g.truth.Core, resolve.Core(base))
 	}
 }
+
+func (g *gen) makeFamilies() {
+	cik := 1700000
+	for i := 0; i < g.cfg.Families; i++ {
+		f := &family{
+			name:   familyNames[i%len(familyNames)],
+			theta:  0.55 + 0.45*g.rng.Float64(),
+			bias:   0.004 * g.rng.NormFloat64(),
+			noise:  0.0015 + 0.0035*g.rng.Float64(),
+			style:  i % 5,
+			vocab:  g.rng.Intn(2),
+			types:  g.rng.Intn(3),
+			lagQ:   32 + g.rng.Intn(14),
+			lagK:   52 + g.rng.Intn(22),
+			fye:    12,
+			weight: math.Exp(0.9 * g.rng.NormFloat64()),
+			last:   map[[2]int]float64{},
+			dist:   map[[2]int]float64{},
+			spell:  map[int]string{},
+		}
+		if g.rng.Float64() < 0.15 {
+			f.fye = []int{3, 6, 9}[g.rng.Intn(3)]
+		}
+		nf := 1
+		if f.weight > 1.2 {
+			nf = 2 + g.rng.Intn(2)
+		}
+		for k := 0; k < nf; k++ {
+			cik += 1 + g.rng.Intn(900)
+			name := strings.ToUpper(f.name + " " + vehicleKinds[k%len(vehicleKinds)])
+			if k >= len(vehicleKinds) {
+				name += " II"
+			}
+			f.funds = append(f.funds, &fund{cik: fmt.Sprint(cik), name: name,
+				share: 0.4 + 0.6*g.rng.Float64(), holds: map[int]float64{}})
+		}
+		g.fams = append(g.fams, f)
+	}
+}
+
+func (g *gen) assignHoldings() {
+	total := 0.0
+	for _, f := range g.fams {
+		total += f.weight
+	}
+	pick := func() int {
+		r := g.rng.Float64() * total
+		for i, f := range g.fams {
+			if r -= f.weight; r <= 0 {
+				return i
+			}
+		}
+		return len(g.fams) - 1
+	}
+	for bi, b := range g.bor {
+		k := 1
+		switch r := g.rng.Float64(); {
+		case r < 0.52:
+			k = 1
+		case r < 0.74:
+			k = 2
+		case r < 0.86:
+			k = 3
+		default:
+			k = 4 + g.rng.Intn(5)
+		}
+		chosen := map[int]bool{}
+		for tries := 0; len(chosen) < k && tries < 60; tries++ {
+			chosen[pick()] = true
+		}
+		// Iterate in a fixed order: map order would make the output depend on
+		// the runtime rather than the seed.
+		fis := make([]int, 0, len(chosen))
+		for fi := range chosen {
+			fis = append(fis, fi)
+		}
+		sort.Ints(fis)
+		for _, fi := range fis {
+			f := g.fams[fi]
+			slice := b.size / float64(len(fis)) * (0.5 + g.rng.Float64())
+			held := false
+			for _, fd := range f.funds {
+				if g.rng.Float64() < 0.7 || !held && fd == f.funds[len(f.funds)-1] {
+					fd.holds[bi] = math.Round(slice * fd.share)
+					held = true
+				}
+			}
+			v := vehicles[g.rng.Intn(len(vehicles))]
+			s := suffixes[g.rng.Intn(len(suffixes))]
+			name := b.base
+			if v != "" {
+				name += " " + v
+			}
+			if strings.HasPrefix(s, "Holdings") && strings.Contains(v, "Holdings") {
+				s = "LLC"
+			}
+			sep := " "
+			if g.rng.Float64() < 0.5 {
+				sep = ", "
+			}
+			f.spell[bi] = name + sep + s
+		}
+	}
+}
+
+// The measurement structure of the generated universe, set to what the real
+// schedules show: the share of a lender's distance from fair value that
+// carries to the next quarter, the share of its variance that is fresh each
+// quarter, and the price below which lenders smooth.
+const (
+	distCarry   = 0.8
+	distWobble  = 0.13
+	smoothBelow = 0.97
+)
+
+// mark returns what a family reports for a borrower and class at quarter q,
+// applying its bias, noise and smoothing. The result is memoised: every fund
+// in a family, and every later comparative column, repeats the same number.
+func (g *gen) mark(fi, bi, class, q int) float64 {
+	key := [3]int{fi, bi, class*1000 + q}
+	if m, ok := g.reports[key]; ok {
+		return m
+	}
+	f, b := g.fams[fi], g.bor[bi]
+	path := b.senior
+	if class == 1 {
+		path = b.junior
+	}
+	v := path[g.at(g.qEnds[q])]
+	scale := 1 + 8*math.Max(0, 1-v)
+	// How lenders mark, as the real schedules show it. A lender's distance
+	// from fair value on a loan is mostly a standing view: four fifths of it
+	// is still there a quarter later. About an eighth of the variance is
+	// wobble, fresh each quarter.
+	k := [2]int{bi, class}
+	d, held := f.dist[k]
+	if held {
+		d = distCarry*d + math.Sqrt(1-distCarry*distCarry)*g.rng.NormFloat64()
+	} else {
+		d = g.rng.NormFloat64()
+	}
+	f.dist[k] = d
+	away := math.Sqrt(1-distWobble)*d + math.Sqrt(distWobble)*g.rng.NormFloat64()
+	target := v + f.bias + f.noise*scale*away
+	m := target
+	// And a lender is slow about news: when a change starts or ends below
+	// the reference price it closes only part of the way to its new view.
+	// The small changes of a performing loan it marks without delay.
+	if prev, ok := f.last[k]; ok && (prev < smoothBelow || target < smoothBelow) {
+		m = f.theta*target + (1-f.theta)*prev
+	}
+	m = math.Round(math.Min(1.02, math.Max(0, m))*10000) / 10000
+	f.last[k] = m
+	g.reports[key] = m
+	return m
+}

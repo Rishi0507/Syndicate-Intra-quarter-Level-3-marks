@@ -226,3 +226,369 @@ impl Dynamics {
         }
     }
 }
+
+/// Reporting dates a loan can have outstanding at once. A mark is read
+/// against the value a quarter before it, so the previous date must still be
+/// held when the mark is filed; five slots keep it there for a loan whose
+/// lenders are split between calendar and off-cycle fiscal quarters.
+pub const MAX_SLOTS: usize = 5;
+const DIM: usize = 2 + 2 * MAX_SLOTS;
+
+/// Grid days after which an unfilled reporting date is given up on.
+const SLOT_LIFE: usize = 140;
+
+const V: usize = 0; // current value
+const C: usize = 1; // sector shock accumulated since the last calendar quarter end
+
+#[derive(Clone, Copy, Debug)]
+struct Slot {
+    ym: i32,
+    opened: usize,
+    /// Belief about the value on the reporting date, before any mark of it.
+    prior_mean: f64,
+    prior_var: f64,
+    /// Variance of the sector shock accumulated over the quarter that ended
+    /// on this date, as believed on the date.
+    sector_var: f64,
+    seen: u32,
+    /// Belief on this date about the value a quarter earlier: mean, variance
+    /// and covariance with the value on this date. The mean is NaN if that
+    /// earlier date was not being tracked.
+    back_mean: f64,
+    back_var: f64,
+    back_cov: f64,
+}
+
+const NO_SLOT: Slot =
+    Slot { ym: 0, opened: 0, prior_mean: 0.0, prior_var: 0.0, sector_var: 0.0, seen: 0, back_mean: f64::NAN, back_var: 0.0, back_cov: 0.0 };
+
+/// The joint Gaussian belief about a loan's value now and on its outstanding
+/// reporting dates.
+#[derive(Clone)]
+pub struct State {
+    x: [f64; DIM],
+    p: [f64; DIM * DIM],
+    slots: [Slot; MAX_SLOTS],
+    n_slots: usize,
+}
+
+impl State {
+    pub fn new(mean: f64, sd: f64) -> State {
+        let mut s = State {
+            x: [0.0; DIM],
+            p: [0.0; DIM * DIM],
+            slots: [NO_SLOT; MAX_SLOTS],
+            n_slots: 0,
+        };
+        s.x[V] = mean;
+        s.p[V * DIM + V] = sd * sd;
+        s
+    }
+
+    #[inline]
+    fn n(&self) -> usize {
+        2 + 2 * self.n_slots
+    }
+
+    pub fn value(&self) -> f64 {
+        self.x[V]
+    }
+
+    pub fn value_var(&self) -> f64 {
+        self.p[V * DIM + V].max(0.0)
+    }
+
+    /// Advances one trading day. `shock` is the fall in the public spread
+    /// factor over the day, so a positive shock lifts prices.
+    pub fn predict(&mut self, shock: f64, d: &Dynamics) {
+        let v = self.x[V];
+        // Drift and sensitivity both depend on the price itself, so the map
+        // is nonlinear in v. Its slope enters the covariance: a loan being
+        // pulled to par sheds uncertainty, a stressed one gains it when
+        // spreads gap.
+        let slope = d.slope(v, shock);
+        self.x[V] = (v + d.drift(v) + d.beta(v) * shock).clamp(0.0, 1.1);
+        if slope != 1.0 {
+            let n = self.n();
+            for j in 0..n {
+                self.p[V * DIM + j] *= slope;
+                self.p[j * DIM + V] *= slope;
+            }
+        }
+        let qi = d.idio_var(v);
+        let qs = d.sector_var(v);
+        self.p[V * DIM + V] += qi + qs;
+        self.p[V * DIM + C] += qs;
+        self.p[C * DIM + V] += qs;
+        self.p[C * DIM + C] += qs;
+    }
+
+    /// Freezes today's value as the value on a reporting date. On a calendar
+    /// quarter end the accumulated sector shock is frozen with it and a new
+    /// accumulation starts.
+    pub fn open_slot(&mut self, ym: i32, day: usize, calendar: bool) {
+        if self.n_slots == MAX_SLOTS {
+            self.drop_slot(0);
+        }
+        let back = self.slot_of(ym - 3).map(|s| 2 + 2 * s);
+        let n = self.n();
+        let (a, b) = (n, n + 1);
+        self.x[a] = self.x[V];
+        self.x[b] = self.x[C];
+        for j in 0..n {
+            self.p[a * DIM + j] = self.p[V * DIM + j];
+            self.p[j * DIM + a] = self.p[j * DIM + V];
+            self.p[b * DIM + j] = self.p[C * DIM + j];
+            self.p[j * DIM + b] = self.p[j * DIM + C];
+        }
+        self.p[a * DIM + a] = self.p[V * DIM + V];
+        self.p[a * DIM + b] = self.p[V * DIM + C];
+        self.p[b * DIM + a] = self.p[C * DIM + V];
+        self.p[b * DIM + b] = self.p[C * DIM + C];
+        self.slots[self.n_slots] = Slot {
+            ym,
+            opened: day,
+            prior_mean: self.x[V],
+            prior_var: self.p[V * DIM + V],
+            sector_var: self.p[C * DIM + C].max(0.0),
+            seen: 0,
+            back_mean: back.map_or(f64::NAN, |k| self.x[k]),
+            back_var: back.map_or(0.0, |k| self.p[k * DIM + k].max(0.0)),
+            back_cov: back.map_or(0.0, |k| self.p[V * DIM + k]),
+        };
+        self.n_slots += 1;
+        if calendar {
+            let n = self.n();
+            self.x[C] = 0.0;
+            for j in 0..n {
+                self.p[C * DIM + j] = 0.0;
+                self.p[j * DIM + C] = 0.0;
+            }
+        }
+    }
+
+    fn drop_slot(&mut self, s: usize) {
+        let n = self.n();
+        let cut = 2 + 2 * s;
+        // Compact the state by deleting two adjacent dimensions.
+        let keep: Vec<usize> = (0..n).filter(|&i| i != cut && i != cut + 1).collect();
+        let mut x = [0.0; DIM];
+        let mut p = [0.0; DIM * DIM];
+        for (ni, &oi) in keep.iter().enumerate() {
+            x[ni] = self.x[oi];
+            for (nj, &oj) in keep.iter().enumerate() {
+                p[ni * DIM + nj] = self.p[oi * DIM + oj];
+            }
+        }
+        self.x = x;
+        self.p = p;
+        for k in s..self.n_slots - 1 {
+            self.slots[k] = self.slots[k + 1];
+        }
+        self.n_slots -= 1;
+    }
+
+    /// Gives up on reporting dates that have been open too long.
+    pub fn expire_slots(&mut self, day: usize) {
+        while self.n_slots > 0 && day.saturating_sub(self.slots[0].opened) > SLOT_LIFE {
+            self.drop_slot(0);
+        }
+    }
+
+    fn slot_of(&self, ym: i32) -> Option<usize> {
+        (0..self.n_slots).find(|&s| self.slots[s].ym == ym)
+    }
+
+    /// Belief about the value on a reporting date, given everything seen so
+    /// far. `None` once the date has expired.
+    pub fn slot_belief(&self, ym: i32) -> Option<Belief> {
+        let s = self.slot_of(ym)?;
+        let k = 2 + 2 * s;
+        let sl = &self.slots[s];
+        Some(Belief {
+            mean: self.x[k],
+            var: self.p[k * DIM + k].max(0.0),
+            prior_mean: sl.prior_mean,
+            prior_var: sl.prior_var.max(0.0),
+            sector_var: sl.sector_var,
+            seen: sl.seen,
+        })
+    }
+
+    /// Where a mark points in the state: the slot of its date and, if the
+    /// mark is anchored on the lender's previous view and that date is still
+    /// held, the slot a quarter back.
+    fn aim(&self, m: &MarkIn) -> Option<(usize, Option<usize>)> {
+        let s = self.slot_of(m.ym)?;
+        let back = if m.anchored() { self.slot_of(m.ym - 3) } else { None };
+        Some((2 + 2 * s, back.map(|b| 2 + 2 * b)))
+    }
+
+    /// Mean and variance of `x[k] - a * x[back]`.
+    fn combination(&self, k: usize, back: Option<usize>, a: f64) -> (f64, f64) {
+        match back {
+            Some(b) => (
+                self.x[k] - a * self.x[b],
+                (self.p[k * DIM + k] - 2.0 * a * self.p[k * DIM + b] + a * a * self.p[b * DIM + b]).max(0.0),
+            ),
+            None => (self.x[k], self.p[k * DIM + k].max(0.0)),
+        }
+    }
+
+    /// What the filter believes about the quantity a mark measures, now and
+    /// as it stood on the reporting date. `None` once the date has expired.
+    pub fn reading(&self, m: &MarkIn, d: &Dynamics) -> Option<Reading> {
+        let (k, back) = self.aim(m)?;
+        let sl = &self.slots[(k - 2) / 2];
+        let tie = back.map(|b| m.tie(self.x[b], d));
+        let (mean, var) = self.combination(k, back, tie.map_or(0.0, |t| t.a));
+        // On the reporting date the earlier date was either tracked or not;
+        // if it was not, the forecast made then could not have been anchored.
+        let prior_tie = if back.is_some() && sl.back_mean.is_finite() { Some(m.tie(sl.back_mean, d)) } else { None };
+        let (prior_mean, prior_var) = match prior_tie {
+            Some(t) => (sl.prior_mean - t.a * sl.back_mean, (sl.prior_var - 2.0 * t.a * sl.back_cov + t.a * t.a * sl.back_var).max(0.0)),
+            None => (sl.prior_mean, sl.prior_var.max(0.0)),
+        };
+        Some(Reading {
+            mean,
+            var,
+            tie,
+            level: self.x[k],
+            prior_mean,
+            prior_var,
+            prior_tie,
+            prior_level: sl.prior_mean,
+            sector_var: sl.sector_var,
+            seen: sl.seen,
+        })
+    }
+
+    /// Conditions on a scalar measurement of one state component.
+    fn update(&mut self, k: usize, y: f64, r2: f64) -> (f64, f64) {
+        self.update_on(k, None, 0.0, y, r2)
+    }
+
+    /// Conditions on a measurement of `x[k] - a * x[back]` with noise
+    /// variance `r2`. Returns the innovation and its variance.
+    fn update_on(&mut self, k: usize, back: Option<usize>, a: f64, y: f64, r2: f64) -> (f64, f64) {
+        let n = self.n();
+        let (mean, var) = self.combination(k, back, a);
+        let s = var + r2;
+        let innov = y - mean;
+        if !(s > 0.0) || !innov.is_finite() {
+            return (innov, s);
+        }
+        // Covariance of every component with the measured combination.
+        let mut row = [0.0; DIM];
+        for i in 0..n {
+            row[i] = self.p[i * DIM + k] - back.map_or(0.0, |b| a * self.p[i * DIM + b]);
+        }
+        for i in 0..n {
+            let gain = row[i] / s;
+            self.x[i] += gain * innov;
+            for j in 0..n {
+                self.p[i * DIM + j] -= gain * row[j];
+            }
+        }
+        // Rounding breaks symmetry slowly; restore it so variances stay valid.
+        for i in 0..n {
+            for j in 0..i {
+                let m = 0.5 * (self.p[i * DIM + j] + self.p[j * DIM + i]);
+                self.p[i * DIM + j] = m;
+                self.p[j * DIM + i] = m;
+            }
+            if self.p[i * DIM + i] < 0.0 {
+                self.p[i * DIM + i] = 0.0;
+            }
+        }
+        (innov, s)
+    }
+
+    /// A lender's mark. Returns false if its date is no longer tracked.
+    pub fn observe_mark(&mut self, m: &MarkIn, d: &Dynamics) -> bool {
+        let Some((k, back)) = self.aim(m) else { return false };
+        let tie = back.map(|b| m.tie(self.x[b], d));
+        let r = m.noise * d.noise_scale(self.x[k]);
+        self.absorb(k, back, tie.map_or(0.0, |t| t.a), m.measured(tie), r * r * m.fresh(tie.is_some()), d);
+        true
+    }
+
+    /// A direct reading, with noise variance `r2`, of the value on reporting
+    /// date `ym`. Returns false if that date is no longer tracked.
+    pub fn observe_date(&mut self, ym: i32, y: f64, r2: f64, d: &Dynamics) -> bool {
+        let Some(s) = self.slot_of(ym) else { return false };
+        self.absorb(2 + 2 * s, None, 0.0, y, r2, d);
+        true
+    }
+
+    /// Absorbs a measurement of `x[k] - a * x[back]`.
+    ///
+    /// The first mark of a date is tested for a jump. The belief becomes a
+    /// two-part mixture, "no jump" and "jump", each updated on the mark and
+    /// weighted by its posterior probability, and is then collapsed back to
+    /// one Gaussian with the mixture's mean and covariance. An ordinary mark
+    /// leaves the jump branch with negligible weight; a large one hands it
+    /// nearly all of it. The jump happened before the reporting date, so it
+    /// is shared by that date, every later date and the present, and not by
+    /// the date a quarter back.
+    fn absorb(&mut self, k: usize, back: Option<usize>, a: f64, y: f64, r2: f64, d: &Dynamics) {
+        let s = (k - 2) / 2;
+        let w = if self.slots[s].seen == 0 {
+            let (mean, var) = self.combination(k, back, a);
+            d.jump_weight(y - mean, var + r2)
+        } else {
+            0.0
+        };
+        if w > 1e-9 {
+            let mut jumped = self.clone();
+            let add = d.jump_sd * d.jump_sd;
+            let mut shared = [V; 1 + MAX_SLOTS];
+            let mut m = 1;
+            for later in s..self.n_slots {
+                shared[m] = 2 + 2 * later;
+                m += 1;
+            }
+            for &i in &shared[..m] {
+                for &j in &shared[..m] {
+                    jumped.p[i * DIM + j] += add;
+                }
+            }
+            jumped.update_on(k, back, a, y, r2);
+            self.update_on(k, back, a, y, r2);
+
+            let n = self.n();
+            let mut x = [0.0; DIM];
+            for i in 0..n {
+                x[i] = (1.0 - w) * self.x[i] + w * jumped.x[i];
+            }
+            for i in 0..n {
+                for j in 0..n {
+                    let quiet = self.p[i * DIM + j] + (self.x[i] - x[i]) * (self.x[j] - x[j]);
+                    let loud = jumped.p[i * DIM + j] + (jumped.x[i] - x[i]) * (jumped.x[j] - x[j]);
+                    self.p[i * DIM + j] = (1.0 - w) * quiet + w * loud;
+                }
+            }
+            self.x = x;
+        } else {
+            self.update_on(k, back, a, y, r2);
+        }
+        self.slots[s].seen += 1;
+    }
+
+    /// An estimate of the sector's move over the quarter ending at `ym`,
+    /// inferred from other loans.
+    pub fn observe_sector(&mut self, ym: i32, y: f64, r2: f64) -> bool {
+        match self.slot_of(ym) {
+            Some(s) => {
+                self.update(3 + 2 * s, y, r2);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// A direct observation of today's value, such as a trade print.
+    pub fn observe_value(&mut self, y: f64, r2: f64) {
+        self.update(V, y, r2);
+    }
+}

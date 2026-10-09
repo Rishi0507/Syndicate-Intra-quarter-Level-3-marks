@@ -592,3 +592,343 @@ impl State {
         self.update(V, y, r2);
     }
 }
+
+/// What the filter believes about a loan's value on a reporting date.
+#[derive(Clone, Copy, Debug)]
+pub struct Belief {
+    pub mean: f64,
+    pub var: f64,
+    /// The belief on the reporting date itself, from public markets and
+    /// earlier quarters only.
+    pub prior_mean: f64,
+    pub prior_var: f64,
+    /// Variance of the sector shock over the quarter ending on this date.
+    pub sector_var: f64,
+    /// Marks of this date already absorbed.
+    pub seen: u32,
+}
+
+/// How a mark is tied to the same lender's view a quarter earlier: the mark
+/// measures `v_now - a * v_then`, once `a * anchor` is taken out.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tie {
+    pub a: f64,
+}
+
+/// A distance fades at the lender's carry while it is within this many of
+/// its standard deviations. Beyond that it is carried whole.
+pub const CORE_SDS: f64 = 3.0;
+
+/// What the filter believes about the quantity one mark measures. For a
+/// tied mark that is the value on its date less the carried share of the
+/// value a quarter earlier; otherwise it is the value on its date.
+#[derive(Clone, Copy, Debug)]
+pub struct Reading {
+    pub mean: f64,
+    pub var: f64,
+    pub tie: Option<Tie>,
+    /// Value on the reporting date, which sets the scale of valuation noise.
+    pub level: f64,
+    /// The same on the reporting date itself, from public markets and
+    /// earlier quarters only.
+    pub prior_mean: f64,
+    pub prior_var: f64,
+    pub prior_tie: Option<Tie>,
+    pub prior_level: f64,
+    /// Variance of the sector shock over the quarter ending on this date.
+    pub sector_var: f64,
+    /// Marks of this date already absorbed.
+    pub seen: u32,
+}
+
+/// Whether a lender's smoothing bears on a change between two prices. It
+/// does once either end is below the reference price.
+///
+/// Lenders are slow about news, not about wobble. When the other holders of
+/// a loan mark it down a point or more, a lender follows with about three
+/// quarters of the move and the rest a quarter later. But the small changes
+/// of a performing loan do not persist at all, and undoing smoothing there
+/// would turn noise into momentum. News about a loan is, almost always, a
+/// change that starts or ends under stress.
+pub fn slow(a: f64, b: f64) -> bool {
+    a < V_REF || b < V_REF
+}
+
+/// The view of a loan behind a reported price, for a lender that carries
+/// share `phi` of its previous price `prev` into each new one: the report is
+/// `phi * prev + (1 - phi) * view`, so the view lies beyond the report, on
+/// the far side from the previous price.
+///
+/// The view is kept between nothing and par. A loan is repaid at par, so a
+/// mark that leaps from 45 to 100 is a restructuring, or new paper in place
+/// of old, and not a lender half way to a view of 120.
+pub fn view(price: f64, prev: f64, phi: f64) -> f64 {
+    if !(prev.is_finite() && phi > 0.0 && slow(prev, price)) {
+        return price;
+    }
+    let raw = (price - phi * prev) / (1.0 - phi);
+    raw.clamp(price.min(0.0), price.max(1.0))
+}
+
+/// A mark as the filter consumes it.
+#[derive(Clone, Copy, Debug)]
+pub struct MarkIn {
+    pub ym: i32,
+    pub asof_idx: usize,
+    pub filed_idx: usize,
+    /// The reported price.
+    pub price: f64,
+    /// The same lender's price one quarter earlier, or NaN.
+    pub prev: f64,
+    /// What that earlier mark implied about fair value, or NaN.
+    pub anchor: f64,
+    /// Share of last quarter's mark carried into this one by the lender.
+    pub phi: f64,
+    /// The lender's level bias.
+    pub bias: f64,
+    /// How far the lender's view sits from fair value at par, beyond its
+    /// bias, as a standard deviation.
+    pub noise: f64,
+    /// Share of that distance still there a quarter later.
+    pub carry: f64,
+    /// Which lender this is, to tell one lender's marks from another's.
+    pub lender: u32,
+}
+
+impl MarkIn {
+    /// Undoes the lender's smoothing and bias, returning what the mark says
+    /// about fair value. A lender that reports `phi` of its old mark plus
+    /// `1 - phi` of its new view has revealed the new view.
+    pub fn implied(&self) -> f64 {
+        view(self.price, self.prev, self.phi) - self.bias
+    }
+
+    /// Whether the mark can be read against the lender's previous view.
+    pub fn anchored(&self) -> bool {
+        self.carry > 0.0 && self.anchor.is_finite()
+    }
+
+    /// How the mark is tied to the lender's previous view, given the value
+    /// believed for that earlier date. Within the core the distance fades at
+    /// the carry. Beyond it only the core fades and the excess stays, so the
+    /// share of the whole distance that is carried rises toward one.
+    pub fn tie(&self, value_then: f64, d: &Dynamics) -> Tie {
+        let distance = (self.anchor - value_then).abs();
+        let core = CORE_SDS * self.noise * d.noise_scale(value_then);
+        if distance <= core {
+            Tie { a: self.carry }
+        } else {
+            Tie { a: 1.0 - (1.0 - self.carry) * core / distance }
+        }
+    }
+
+    /// The measurement the mark amounts to. Tied, what the lender carried
+    /// from its previous view is taken out, leaving the value now less a
+    /// share of the value then, plus the fresh part of its disagreement.
+    pub fn measured(&self, tie: Option<Tie>) -> f64 {
+        match tie {
+            Some(t) => self.implied() - t.a * self.anchor,
+            None => self.implied(),
+        }
+    }
+
+    /// Share of the lender's distance that is fresh in a tied mark.
+    pub fn fresh(&self, tied: bool) -> f64 {
+        if tied {
+            1.0 - self.carry * self.carry
+        } else {
+            1.0
+        }
+    }
+
+    /// Predicts the reported price from a belief about the measured
+    /// quantity, returning mean and standard deviation. `level` is the value
+    /// on the reporting date, which scales the noise.
+    pub fn predict(&self, mean: f64, var: f64, tie: Option<Tie>, level: f64, d: &Dynamics) -> (f64, f64) {
+        let r = self.noise * d.noise_scale(level);
+        let view = match tie {
+            Some(t) => mean + t.a * self.anchor,
+            None => mean,
+        };
+        let sd = (var + r * r * self.fresh(tie.is_some())).sqrt();
+        // What the lender would report if it marked without delay.
+        let target = view + self.bias;
+        if self.prev.is_finite() && self.phi > 0.0 && slow(self.prev, target) {
+            (self.phi * self.prev + (1.0 - self.phi) * target, (1.0 - self.phi) * sd)
+        } else {
+            (target, sd)
+        }
+    }
+}
+
+/// An estimate of a sector's move over a quarter, available from some day.
+#[derive(Clone, Copy, Debug)]
+pub struct SectorIn {
+    pub ym: i32,
+    pub avail_idx: usize,
+    pub value: f64,
+    pub var: f64,
+}
+
+/// A direct observation of current value.
+#[derive(Clone, Copy, Debug)]
+pub struct PrintIn {
+    pub idx: usize,
+    pub price: f64,
+    pub var: f64,
+}
+
+/// The filter's forecast of one mark, made twice: once on the reporting date
+/// from public information alone, and once just before the mark was filed,
+/// after every other lender's mark of that date already public.
+#[derive(Clone, Copy, Debug)]
+pub struct Forecast {
+    /// Index into the marks passed to `run`.
+    pub mark: usize,
+    pub public_mean: f64,
+    pub public_sd: f64,
+    pub peer_mean: f64,
+    pub peer_sd: f64,
+    /// Other lenders' marks of the same date seen before this one.
+    pub seen: u32,
+    /// What the mark measures, less the public forecast of it: the surprise
+    /// this loan delivered to anyone watching public markets.
+    pub surprise: f64,
+    /// Variance of that surprise, and the part of it due to the sector.
+    pub surprise_var: f64,
+    pub sector_var: f64,
+    /// Grid day the mark became usable.
+    pub arrival: usize,
+    /// The mark arrived after its reporting date had expired.
+    pub late: bool,
+}
+
+/// One day of the real-time estimate.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Point {
+    pub mean: f64,
+    pub sd: f64,
+}
+
+/// Inputs to one loan's filter run. Marks must be sorted by `filed_idx`.
+pub struct Run<'a> {
+    /// Fall in the public spread factor on each grid day.
+    pub shocks: &'a [f64],
+    /// First and last grid day of the run, inclusive.
+    pub start: usize,
+    pub end: usize,
+    /// Calendar quarter ends inside the run, as (grid day, year-month). A
+    /// slot opens on each whether or not this loan has a mark of that date
+    /// yet, so that other loans' marks can inform it as they are filed.
+    pub quarters: &'a [(usize, i32)],
+    pub marks: &'a [MarkIn],
+    pub sector: &'a [SectorIn],
+    pub prints: &'a [PrintIn],
+}
+
+/// Runs the real-time filter for one loan from `start` to `end` inclusive.
+/// Forecasts are appended in filing order; if `path` is given it receives the
+/// estimate at the close of every day.
+pub fn run(r: &Run, d: &Dynamics, forecasts: &mut Vec<Forecast>, mut path: Option<&mut Vec<Point>>) -> State {
+    let mut st = State::new(d.prior_mean, d.prior_sd);
+
+    // Reporting dates this loan has marks for, in time order.
+    let mut dates: Vec<(usize, i32)> = r.marks.iter().map(|m| (m.asof_idx, m.ym)).collect();
+    dates.extend(r.quarters.iter().filter(|q| q.0 >= r.start && q.0 <= r.end));
+    dates.sort_unstable();
+    dates.dedup_by_key(|d| d.1);
+    let mut next_date = 0;
+
+    let mut order: Vec<usize> = (0..r.marks.len()).collect();
+    // A mark cannot be known before the day after its reporting date.
+    let arrival = |m: &MarkIn| m.filed_idx.max(m.asof_idx + 1);
+    order.sort_by_key(|&i| (arrival(&r.marks[i]), i));
+    let mut next_mark = 0;
+
+    let mut sector: Vec<&SectorIn> = r.sector.iter().collect();
+    sector.sort_by_key(|s| s.avail_idx);
+    let mut next_sector = 0;
+
+    let mut prints: Vec<&PrintIn> = r.prints.iter().collect();
+    prints.sort_by_key(|p| p.idx);
+    let mut next_print = 0;
+
+    for t in r.start..=r.end {
+        if t > r.start {
+            st.predict(r.shocks[t], d);
+        }
+        st.expire_slots(t);
+        while next_date < dates.len() && dates[next_date].0 <= t {
+            let ym = dates[next_date].1;
+            st.open_slot(ym, t, matches!(ym.rem_euclid(12), 2 | 5 | 8 | 11));
+            next_date += 1;
+        }
+
+        while next_sector < sector.len() && sector[next_sector].avail_idx <= t {
+            let s = sector[next_sector];
+            st.observe_sector(s.ym, s.value, s.var);
+            next_sector += 1;
+        }
+
+        // Everything filed on one day is forecast from the same information
+        // before any of it is absorbed, so same-day filers cannot inform each
+        // other's forecasts.
+        let first = next_mark;
+        while next_mark < order.len() && arrival(&r.marks[order[next_mark]]) <= t {
+            let i = order[next_mark];
+            let m = &r.marks[i];
+            let f = match st.reading(m, d) {
+                Some(b) => {
+                    let (pm, ps) = m.predict(b.prior_mean, b.prior_var, b.prior_tie, b.prior_level, d);
+                    let (xm, xs) = m.predict(b.mean, b.var, b.tie, b.level, d);
+                    let noise = m.noise * d.noise_scale(b.prior_level);
+                    let fresh = m.fresh(b.prior_tie.is_some());
+                    Forecast {
+                        mark: i,
+                        public_mean: pm,
+                        public_sd: ps,
+                        peer_mean: xm,
+                        peer_sd: xs,
+                        seen: b.seen,
+                        surprise: m.measured(b.prior_tie) - b.prior_mean,
+                        surprise_var: b.prior_var + noise * noise * fresh,
+                        sector_var: b.sector_var,
+                        arrival: t,
+                        late: false,
+                    }
+                }
+                None => Forecast {
+                    mark: i,
+                    public_mean: f64::NAN,
+                    public_sd: f64::NAN,
+                    peer_mean: f64::NAN,
+                    peer_sd: f64::NAN,
+                    seen: 0,
+                    surprise: f64::NAN,
+                    surprise_var: f64::NAN,
+                    sector_var: 0.0,
+                    arrival: t,
+                    late: true,
+                },
+            };
+            forecasts.push(f);
+            next_mark += 1;
+        }
+        for &i in &order[first..next_mark] {
+            // The lender's noise sits on its view of fair value, which is
+            // exactly what de-smoothing recovers, so it carries over as is.
+            st.observe_mark(&r.marks[i], d);
+        }
+
+        while next_print < prints.len() && prints[next_print].idx <= t {
+            let p = prints[next_print];
+            st.observe_value(p.price, p.var);
+            next_print += 1;
+        }
+
+        if let Some(out) = path.as_deref_mut() {
+            out.push(Point { mean: st.value(), sd: st.value_var().sqrt() });
+        }
+    }
+    st
+}

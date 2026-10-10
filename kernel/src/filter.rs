@@ -1292,3 +1292,368 @@ fn smooth_plain(shocks: &[f64], start: usize, end: usize, marks: &[MarkIn], prin
     }
     out
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stats::Rng;
+
+    fn dynamics() -> Dynamics {
+        Dynamics {
+            beta0: 0.012,
+            beta1: 0.10,
+            idio0: 0.0006,
+            idio1: 0.012,
+            sector0: 0.0003,
+            sector1: 0.0015,
+            noise1: 8.0,
+            par: 0.992,
+            pull: 0.008,
+            pull_up: 0.0,
+            drift0: 0.0,
+            drift_s: 0.0001,
+            drift1: -0.0005,
+            jump_prob: 0.0,
+            jump_sd: 0.0,
+            prior_mean: 0.985,
+            prior_sd: 0.03,
+        }
+    }
+
+    /// With no shocks, no stress and one direct observation, the filter must
+    /// reproduce the scalar Kalman update exactly.
+    #[test]
+    fn single_update_matches_closed_form() {
+        let mut st = State::new(0.99, 0.02);
+        st.observe_value(0.97, 0.01 * 0.01);
+        let (p, r) = (0.02f64 * 0.02, 0.01f64 * 0.01);
+        let gain = p / (p + r);
+        assert!((st.value() - (0.99 + gain * (0.97 - 0.99))).abs() < 1e-15);
+        assert!((st.value_var() - p * (1.0 - gain)).abs() < 1e-15);
+    }
+
+    /// A mark of a past date must move today's estimate by the covariance
+    /// between then and now, not by the full surprise.
+    #[test]
+    fn delayed_mark_updates_the_present_through_the_slot() {
+        let d = Dynamics { beta1: 0.0, idio1: 0.0, sector0: 0.0, sector1: 0.0, noise1: 0.0, pull: 0.0, pull_up: 0.0, drift_s: 0.0, drift1: 0.0, ..dynamics() };
+        let mut st = State::new(0.99, 0.01);
+        st.open_slot(100, 0, false);
+        let days = 30;
+        for _ in 0..days {
+            st.predict(0.0, &d);
+        }
+        let p0 = 0.01f64 * 0.01;
+        let q = d.idio0 * d.idio0 * days as f64;
+        // Before the mark: today's variance has grown, the slot's has not.
+        assert!((st.value_var() - (p0 + q)).abs() < 1e-15);
+        let r2 = 0.002f64 * 0.002;
+        let y = 0.96;
+        st.observe_date(100, y, r2, &d);
+        // Cov(v_now, v_then) = p0, so the gain on today is p0 / (p0 + r2).
+        let gain = p0 / (p0 + r2);
+        assert!((st.value() - (0.99 + gain * (y - 0.99))).abs() < 1e-14);
+        assert!((st.value_var() - (p0 + q - gain * p0)).abs() < 1e-15);
+        // What remains is the slot's posterior plus everything since.
+        assert!(st.value_var() > q);
+    }
+
+    /// Simulates the model the filter assumes and measures its honesty:
+    /// the variance of its standardised forecast errors, which should be one,
+    /// and the ratio of its actual to its stated error about today's value,
+    /// which should also be one.
+    fn honesty(d: &Dynamics, seed: u64) -> (f64, f64) {
+        let mut rng = Rng::new(seed);
+        let days = 900;
+        let quarter = 63;
+        let lag = 32;
+        let noise = 0.004;
+
+        let (mut z2, mut nz) = (0.0, 0.0);
+        let (mut e2, mut p_sum) = (0.0, 0.0);
+        for _ in 0..400 {
+            let shocks: Vec<f64> = (0..days).map(|_| 0.02 * rng.normal()).collect();
+            let mut v = vec![0.0; days];
+            v[0] = d.prior_mean + d.prior_sd * rng.normal();
+            for t in 1..days {
+                let sd = d.daily_var(v[t - 1]).sqrt();
+                v[t] = (v[t - 1] + d.drift(v[t - 1]) + d.beta(v[t - 1]) * shocks[t] + sd * rng.normal()).clamp(0.0, 1.1);
+            }
+            let mut marks = Vec::new();
+            let mut ym = 0;
+            let mut t = 0;
+            while t + lag < days {
+                for fam in 0..2 {
+                    let r = noise * d.noise_scale(v[t]);
+                    marks.push(MarkIn {
+                        ym,
+                        asof_idx: t,
+                        filed_idx: t + lag + 6 * fam,
+                        price: v[t] + r * rng.normal(),
+                        prev: f64::NAN,
+                        anchor: f64::NAN,
+                        phi: 0.0,
+                        bias: 0.0,
+                        noise,
+                        carry: 0.0,
+                        lender: fam as u32,
+                    });
+                }
+                ym += 3;
+                t += quarter;
+            }
+            let mut fc = Vec::new();
+            let mut path = Vec::new();
+            run(
+                &Run { shocks: &shocks, start: 0, end: days - 1, quarters: &[], marks: &marks, sector: &[], prints: &[] },
+                d,
+                &mut fc,
+                Some(&mut path),
+            );
+            for f in &fc {
+                let m = &marks[f.mark];
+                if m.ym == 0 {
+                    continue; // the prior is exact by construction; skip it
+                }
+                let z = (m.price - f.peer_mean) / f.peer_sd;
+                z2 += z * z;
+                nz += 1.0;
+            }
+            for t in (quarter..days).step_by(7) {
+                let e = v[t] - path[t].mean;
+                e2 += e * e;
+                p_sum += path[t].sd * path[t].sd;
+            }
+        }
+        (z2 / nz, e2 / p_sum)
+    }
+
+    /// In the linear Gaussian case the filter is exact, so both honesty
+    /// measures must equal one up to Monte Carlo error.
+    #[test]
+    fn filter_is_exact_on_the_linear_model() {
+        let d = Dynamics { beta1: 0.0, idio1: 0.0, sector1: 0.0, noise1: 0.0, pull: 0.0, pull_up: 0.0, drift_s: 0.0, drift1: 0.0, ..dynamics() };
+        let (zvar, ratio) = honesty(&d, 11);
+        assert!((zvar - 1.0).abs() < 0.04, "standardised forecast variance {zvar}");
+        assert!((ratio - 1.0).abs() < 0.04, "actual over stated error variance {ratio}");
+    }
+
+    /// With stress effects on, value dynamics are piecewise linear and the
+    /// filter linearises around its own estimate. It should stay close to
+    /// honest; this bounds how much the approximation costs.
+    #[test]
+    fn filter_stays_honest_with_stress_effects() {
+        let (zvar, ratio) = honesty(&dynamics(), 11);
+        assert!((zvar - 1.0).abs() < 0.15, "standardised forecast variance {zvar}");
+        assert!((ratio - 1.0).abs() < 0.15, "actual over stated error variance {ratio}");
+    }
+
+    /// A ten-point fall reported by one lender. Without a jump model the
+    /// filter treats most of it as valuation error; with one it believes it.
+    #[test]
+    fn jumps_are_believed() {
+        let quiet = Dynamics { beta1: 0.0, idio1: 0.0, sector0: 0.0, sector1: 0.0, noise1: 0.0, pull: 0.0, pull_up: 0.0, drift_s: 0.0, drift1: 0.0, ..dynamics() };
+        let jumpy = Dynamics { jump_prob: 0.01, jump_sd: 0.08, ..quiet.clone() };
+        let after = |d: &Dynamics| {
+            let mut st = State::new(0.99, 0.003);
+            st.open_slot(100, 0, false);
+            for _ in 0..30 {
+                st.predict(0.0, d);
+            }
+            st.observe_date(100, 0.89, 0.003 * 0.003, d);
+            (st.value(), st.value_var().sqrt())
+        };
+        let (v_quiet, _) = after(&quiet);
+        let (v_jumpy, sd_jumpy) = after(&jumpy);
+        assert!(v_quiet > 0.93, "without jumps the fall is mostly discounted: {v_quiet}");
+        assert!(v_jumpy < 0.895, "with jumps the fall is believed: {v_jumpy}");
+        assert!(sd_jumpy < 0.01, "and one mark still pins the new level: {sd_jumpy}");
+
+        // An ordinary surprise must be left alone.
+        let small = |d: &Dynamics| {
+            let mut st = State::new(0.99, 0.003);
+            st.open_slot(100, 0, false);
+            st.observe_date(100, 0.987, 0.003 * 0.003, d);
+            st.value()
+        };
+        assert!((small(&quiet) - small(&jumpy)).abs() < 2e-4);
+    }
+
+    /// The smoother knows the future, so it can never be less certain than
+    /// the filter, and at the final day the two must agree. Both statements
+    /// are exact only for the linear model, so stress effects are switched
+    /// off here; with them on, the two passes linearise around slightly
+    /// different means.
+    #[test]
+    fn smoother_tightens_the_filter() {
+        let d = Dynamics { beta1: 0.0, idio1: 0.0, sector0: 0.0, sector1: 0.0, noise1: 0.0, pull: 0.0, pull_up: 0.0, drift_s: 0.0, drift1: 0.0, ..dynamics() };
+        let mut rng = Rng::new(3);
+        let days = 400;
+        let shocks: Vec<f64> = (0..days).map(|_| 0.02 * rng.normal()).collect();
+        let marks: Vec<MarkIn> = (0..6)
+            .map(|q| MarkIn {
+                ym: 3 * q,
+                asof_idx: 63 * q as usize,
+                filed_idx: 63 * q as usize + 1,
+                price: 0.985 - 0.004 * q as f64,
+                prev: f64::NAN,
+                anchor: f64::NAN,
+                phi: 0.0,
+                bias: 0.0,
+                noise: 0.003,
+                carry: 0.0,
+                lender: 0,
+            })
+            .collect();
+        let sm = smooth(&shocks, 0, days - 1, &marks, &[], &d);
+        let mut path = Vec::new();
+        run(
+            &Run { shocks: &shocks, start: 0, end: days - 1, quarters: &[], marks: &marks, sector: &[], prints: &[] },
+            &d,
+            &mut Vec::new(),
+            Some(&mut path),
+        );
+        for t in 0..days {
+            assert!(sm[t].sd <= path[t].sd + 1e-9, "day {t}: smoothed {} > filtered {}", sm[t].sd, path[t].sd);
+        }
+        assert!((sm[days - 1].mean - path[days - 1].mean).abs() < 1e-9);
+        assert!((sm[days - 1].sd - path[days - 1].sd).abs() < 1e-9);
+    }
+
+    /// With nothing carried, a lender's distance is redrawn every quarter,
+    /// which is plain valuation noise. The two smoothers must then agree.
+    /// Noise that grows with stress is switched off: the plain smoother
+    /// scales each mark's noise after absorbing the one before it, the
+    /// carried one scales all of a day's marks together.
+    #[test]
+    fn carried_smoother_reduces_to_the_plain_one() {
+        let d = Dynamics { noise1: 0.0, ..dynamics() };
+        let mut rng = Rng::new(5);
+        let days = 400;
+        let shocks: Vec<f64> = (0..days).map(|_| 0.02 * rng.normal()).collect();
+        let mut marks = Vec::new();
+        for q in 0..6 {
+            for lender in 0..2u32 {
+                marks.push(MarkIn {
+                    ym: 3 * q,
+                    asof_idx: 20 + 63 * q as usize,
+                    filed_idx: 50 + 63 * q as usize,
+                    price: 0.985 - 0.006 * q as f64 + 0.004 * rng.normal(),
+                    prev: f64::NAN,
+                    anchor: f64::NAN,
+                    phi: 0.0,
+                    bias: 0.0,
+                    noise: 0.004,
+                    carry: 0.0,
+                    lender,
+                });
+            }
+        }
+        let prints = [PrintIn { idx: 300, price: 0.95, var: 1e-5 }];
+        let plain = smooth_plain(&shocks, 0, days - 1, &marks, &prints, &d);
+        let carried = smooth_carried(&shocks, 0, days - 1, &marks, &prints, &d);
+        for t in 0..days {
+            assert!((plain[t].mean - carried[t].mean).abs() < 2e-6, "day {t}: {} against {}", plain[t].mean, carried[t].mean);
+            assert!((plain[t].sd - carried[t].sd).abs() < 2e-6, "day {t}: {} against {}", plain[t].sd, carried[t].sd);
+        }
+    }
+
+    /// Two lenders a point apart, quarter after quarter, with value moving
+    /// underneath. Read as fresh noise, each mark is averaged away and the
+    /// forecast of either lender's next mark sits between them. Read as a
+    /// standing disagreement, each lender is forecast at its own level.
+    #[test]
+    fn standing_disagreement_is_carried_into_forecasts() {
+        let d = Dynamics { beta1: 0.0, idio1: 0.0, sector0: 0.0, sector1: 0.0, noise1: 0.0, pull: 0.0, pull_up: 0.0, drift_s: 0.0, drift1: 0.0, ..dynamics() };
+        let days = 500;
+        let shocks = vec![0.0; days];
+        let build = |carry: f64| -> Vec<MarkIn> {
+            let mut marks = Vec::new();
+            for q in 0..7 {
+                let value = 0.98 - 0.002 * q as f64;
+                for lender in 0..2u32 {
+                    let off = if lender == 0 { 0.005 } else { -0.005 };
+                    let price = value + off;
+                    let prev = if q > 0 { value + 0.002 + off } else { f64::NAN };
+                    marks.push(MarkIn {
+                        ym: 3 * q,
+                        asof_idx: 10 + 63 * q as usize,
+                        filed_idx: 40 + 63 * q as usize + 5 * lender as usize,
+                        price,
+                        prev,
+                        anchor: prev,
+                        phi: 0.0,
+                        bias: 0.0,
+                        noise: 0.005,
+                        carry,
+                        lender,
+                    });
+                }
+            }
+            marks
+        };
+        let error = |carry: f64| -> f64 {
+            let marks = build(carry);
+            let mut fc = Vec::new();
+            run(&Run { shocks: &shocks, start: 0, end: days - 1, quarters: &[], marks: &marks, sector: &[], prints: &[] }, &d, &mut fc, None);
+            let late: Vec<&Forecast> = fc.iter().filter(|f| marks[f.mark].ym >= 9).collect();
+            late.iter().map(|f| (marks[f.mark].price - f.peer_mean).abs()).sum::<f64>() / late.len() as f64
+        };
+        let (fresh, carried) = (error(0.0), error(0.9));
+        assert!(fresh > 0.003, "as noise, each lender is pulled to the middle: {fresh}");
+        assert!(carried < 0.0015, "as a habit, each is forecast where it stands: {carried}");
+
+        // The hindsight value sits between the two lenders either way.
+        let marks = build(0.9);
+        let sm = smooth(&shocks, 0, days - 1, &marks, &[], &d);
+        let at = 10 + 63 * 4;
+        assert!((sm[at].mean - (0.98 - 0.008)).abs() < 0.002, "smoothed value {}", sm[at].mean);
+    }
+
+    /// A view never leaves the range a loan can be worth.
+    #[test]
+    fn views_stay_between_nothing_and_par() {
+        assert!((view(0.60, 1.00, 0.25) - (0.60 - 0.25) / 0.75).abs() < 1e-15);
+        assert_eq!(view(1.00, 0.45, 0.25), 1.00);
+        assert_eq!(view(1.02, 0.99, 0.25), 1.02);
+        assert_eq!(view(0.10, 1.00, 0.25), 0.0);
+        assert_eq!(view(0.93, f64::NAN, 0.25), 0.93);
+        assert_eq!(view(0.93, 0.99, 0.0), 0.93);
+    }
+
+    /// De-smoothing must invert smoothing: a lender who reports a blend of
+    /// old mark and new view has an implied view equal to the new view.
+    #[test]
+    fn implied_value_inverts_smoothing() {
+        let (view, prev, phi, bias) = (0.93, 0.99, 0.4, 0.002);
+        let reported = phi * prev + (1.0 - phi) * (view + bias);
+        let m =
+            MarkIn { ym: 0, asof_idx: 0, filed_idx: 1, price: reported, prev, anchor: f64::NAN, phi, bias, noise: 0.003, carry: 0.0, lender: 0 };
+        assert!((m.implied() - view).abs() < 1e-14);
+        let d = Dynamics { noise1: 0.0, ..dynamics() };
+        let (mean, sd) = m.predict(view, 0.0, None, view, &d);
+        assert!((mean - reported).abs() < 1e-14);
+        assert!((sd - (1.0 - phi) * 0.003).abs() < 1e-14);
+    }
+
+    #[test]
+    fn dynamics_survive_flattening() {
+        let d = dynamics();
+        let v = d.to_vec();
+        assert_eq!(v.len(), DYNAMICS_LEN);
+        assert_eq!(Dynamics::from_slice(&v), d);
+    }
+
+    /// More than MAX_SLOTS reporting dates outstanding must not corrupt state.
+    #[test]
+    fn slots_overflow_cleanly() {
+        let d = dynamics();
+        let mut st = State::new(0.99, 0.01);
+        for k in 0..8 {
+            st.open_slot(k, k as usize, k % 3 == 0);
+            st.predict(0.01, &d);
+        }
+        assert!(st.slot_belief(0).is_none() && st.slot_belief(2).is_none() && st.slot_belief(7).is_some());
+        assert!(st.value_var().is_finite() && st.value_var() > 0.0);
+    }
+}

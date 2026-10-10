@@ -932,3 +932,363 @@ pub fn run(r: &Run, d: &Dynamics, forecasts: &mut Vec<Forecast>, mut path: Optio
     }
     st
 }
+
+/// The hindsight estimate: the value on every day given every mark ever
+/// filed, by a forward filter and a Rauch-Tung-Striebel backward pass.
+///
+/// With all marks in hand their publication delay no longer matters, so each
+/// one is placed on its reporting date. Prints are direct observations of
+/// value on their own day.
+///
+/// Where lenders' disagreement carries between quarters, each lender's
+/// distance from fair value is estimated alongside the value itself. Where it
+/// does not, that distance is plain noise and the state is the value alone.
+pub fn smooth(shocks: &[f64], start: usize, end: usize, marks: &[MarkIn], prints: &[PrintIn], d: &Dynamics) -> Vec<Point> {
+    if marks.iter().any(|m| m.carry > 0.0) {
+        smooth_carried(shocks, start, end, marks, prints, d)
+    } else {
+        smooth_plain(shocks, start, end, marks, prints, d)
+    }
+}
+
+/// Inverts the symmetric positive definite `m` by `m` matrix `a` in place by
+/// Gauss-Jordan elimination with pivoting. Returns false if it is singular.
+fn invert(a: &mut [f64], m: usize, work: &mut Vec<f64>) -> bool {
+    work.clear();
+    work.resize(m * m, 0.0);
+    for i in 0..m {
+        work[i * m + i] = 1.0;
+    }
+    for c in 0..m {
+        let mut piv = c;
+        for r in c + 1..m {
+            if a[r * m + c].abs() > a[piv * m + c].abs() {
+                piv = r;
+            }
+        }
+        if !(a[piv * m + c].abs() > 1e-300) {
+            return false;
+        }
+        if piv != c {
+            for j in 0..m {
+                a.swap(c * m + j, piv * m + j);
+                work.swap(c * m + j, piv * m + j);
+            }
+        }
+        let inv = 1.0 / a[c * m + c];
+        for j in 0..m {
+            a[c * m + j] *= inv;
+            work[c * m + j] *= inv;
+        }
+        for r in 0..m {
+            if r != c {
+                let f = a[r * m + c];
+                if f != 0.0 {
+                    for j in 0..m {
+                        a[r * m + j] -= f * a[c * m + j];
+                        work[r * m + j] -= f * work[c * m + j];
+                    }
+                }
+            }
+        }
+    }
+    a.copy_from_slice(work);
+    true
+}
+
+/// The smoother with one extra state per lender: how far its view of the
+/// loan sits from fair value. Between a lender's marks that distance stands
+/// still; from one quarter's mark to the next it keeps the carried share and
+/// redraws the rest. A mark then reads value plus distance exactly.
+fn smooth_carried(shocks: &[f64], start: usize, end: usize, marks: &[MarkIn], prints: &[PrintIn], d: &Dynamics) -> Vec<Point> {
+    // A mark is an exact reading of value plus distance. A floor on its
+    // variance, a thousandth of a point, keeps the algebra well conditioned.
+    const EXACT: f64 = 1e-10;
+    let days = end + 1 - start;
+    let in_range = |m: &MarkIn| m.asof_idx >= start && m.asof_idx <= end;
+    let mut ids: Vec<u32> = marks.iter().filter(|m| in_range(m)).map(|m| m.lender).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let n = 1 + ids.len();
+    let col = |lender: u32| 1 + ids.binary_search(&lender).unwrap_or(0);
+
+    let mut prints_by_day: Vec<Vec<usize>> = vec![Vec::new(); days];
+    for (i, p) in prints.iter().enumerate() {
+        if p.idx >= start && p.idx <= end {
+            prints_by_day[p.idx - start].push(i);
+        }
+    }
+    let mut by_day: Vec<Vec<usize>> = vec![Vec::new(); days];
+    for (i, m) in marks.iter().enumerate() {
+        if in_range(m) {
+            by_day[m.asof_idx - start].push(i);
+        }
+    }
+
+    // Conditions the state on a reading of `x[0] + x[c]`, or of `x[0]` alone
+    // when `c` is zero.
+    let update = |x: &mut [f64], p: &mut [f64], c: usize, y: f64, r2: f64| {
+        let mut row = vec![0.0; n];
+        for i in 0..n {
+            row[i] = p[i * n] + if c > 0 { p[i * n + c] } else { 0.0 };
+        }
+        let mean = x[0] + if c > 0 { x[c] } else { 0.0 };
+        let s = row[0] + if c > 0 { row[c] } else { 0.0 } + r2;
+        if !(s > 0.0) {
+            return;
+        }
+        let innov = y - mean;
+        for i in 0..n {
+            let gain = row[i] / s;
+            x[i] += gain * innov;
+            for j in 0..n {
+                p[i * n + j] -= gain * row[j];
+            }
+        }
+        for i in 0..n {
+            for j in 0..i {
+                let m = 0.5 * (p[i * n + j] + p[j * n + i]);
+                p[i * n + j] = m;
+                p[j * n + i] = m;
+            }
+            if p[i * n + i] < 0.0 {
+                p[i * n + i] = 0.0;
+            }
+        }
+    };
+
+    // As in the plain smoother, a first pass finds the quarters that held a
+    // jump and spreads the variance to reach the mark over their days.
+    let mut extra = vec![0.0; days];
+    let (mut xp, mut pp) = (vec![0.0; days * n], vec![0.0; days * n * n]); // predicted
+    let (mut xf, mut pf) = (vec![0.0; days * n], vec![0.0; days * n * n]); // filtered
+    // Each day's transition is diagonal: the slope of the value map, and for
+    // a lender marking that day the share of its distance carried over.
+    let mut step = vec![1.0; days * n];
+    for pass in 0..2 {
+        let mut x = vec![0.0; n];
+        let mut p = vec![0.0; n * n];
+        x[0] = d.prior_mean;
+        p[0] = d.prior_sd * d.prior_sd;
+        let mut last_ym = vec![i32::MIN; n];
+        let mut last_obs = 0;
+        let mut q = vec![0.0; n];
+        for k in 0..days {
+            let t = &mut step[k * n..(k + 1) * n];
+            t.fill(1.0);
+            q.fill(0.0);
+            if k > 0 {
+                let shock = shocks[start + k];
+                t[0] = d.slope(x[0], shock);
+                q[0] = d.daily_var(x[0]) + extra[k];
+                x[0] = (x[0] + d.drift(x[0]) + d.beta(x[0]) * shock).clamp(0.0, 1.1);
+            }
+            for &i in &by_day[k] {
+                let mk = &marks[i];
+                let c = col(mk.lender);
+                let r = mk.noise * d.noise_scale(x[0]);
+                let carry = if mk.carry > 0.0 && last_ym[c] == mk.ym - 3 { mk.carry.min(0.999) } else { 0.0 };
+                q[c] = r * r * (1.0 - carry * carry);
+                last_ym[c] = mk.ym;
+                // Within the core the distance fades; beyond it, only the
+                // core does and the rest stands.
+                let core = CORE_SDS * r;
+                t[c] = if carry > 0.0 && x[c].abs() > core { 1.0 - (1.0 - carry) * core / x[c].abs() } else { carry };
+            }
+            for i in 1..n {
+                x[i] *= t[i];
+            }
+            for i in 0..n {
+                for j in 0..n {
+                    p[i * n + j] *= t[i] * t[j];
+                }
+                p[i * n + i] += q[i];
+            }
+            xp[k * n..(k + 1) * n].copy_from_slice(&x);
+            pp[k * n * n..(k + 1) * n * n].copy_from_slice(&p);
+
+            for (j, &i) in by_day[k].iter().enumerate() {
+                let mk = &marks[i];
+                let c = col(mk.lender);
+                if pass == 0 && j == 0 && k > last_obs {
+                    let innov = mk.implied() - (x[0] + x[c]);
+                    let s = p[0] + 2.0 * p[c] + p[c * n + c] + EXACT;
+                    if d.jump_weight(innov, s) > 0.5 {
+                        let per_day = (innov * innov - s).max(0.0) / (k - last_obs) as f64;
+                        for e in extra[last_obs + 1..=k].iter_mut() {
+                            *e = per_day;
+                        }
+                    }
+                }
+                update(&mut x, &mut p, c, mk.implied(), EXACT);
+            }
+            for &i in &prints_by_day[k] {
+                update(&mut x, &mut p, 0, prints[i].price, prints[i].var);
+            }
+            if !by_day[k].is_empty() || !prints_by_day[k].is_empty() {
+                last_obs = k;
+            }
+            xf[k * n..(k + 1) * n].copy_from_slice(&x);
+            pf[k * n * n..(k + 1) * n * n].copy_from_slice(&p);
+        }
+        if pass == 0 && extra.iter().all(|e| *e == 0.0) {
+            break;
+        }
+    }
+
+    // Backward pass. A lender not yet seen has no distance to speak of: its
+    // row and column are zero, and it is left out of the inversion.
+    let mut out = vec![Point::default(); days];
+    let mut xs = xf[(days - 1) * n..].to_vec();
+    let mut ps = pf[(days - 1) * n * n..].to_vec();
+    out[days - 1] = Point { mean: xs[0], sd: ps[0].max(0.0).sqrt() };
+    let (mut inv, mut work, mut gain, mut tmp) = (Vec::new(), Vec::new(), vec![0.0; n * n], vec![0.0; n * n]);
+    let mut active: Vec<usize> = Vec::with_capacity(n);
+    for k in (0..days - 1).rev() {
+        let t = &step[(k + 1) * n..(k + 2) * n];
+        let pnext = &pp[(k + 1) * n * n..(k + 2) * n * n];
+        let pk = &pf[k * n * n..(k + 1) * n * n];
+        active.clear();
+        active.extend((0..n).filter(|&i| pnext[i * n + i] > 0.0));
+        let m = active.len();
+        inv.clear();
+        inv.resize(m * m, 0.0);
+        for (a, &i) in active.iter().enumerate() {
+            for (b, &j) in active.iter().enumerate() {
+                inv[a * m + b] = pnext[i * n + j];
+            }
+        }
+        gain.fill(0.0);
+        if m > 0 && invert(&mut inv, m, &mut work) {
+            // gain = P_k T' inv(P_next), on the active columns.
+            for i in 0..n {
+                for (b, &j) in active.iter().enumerate() {
+                    let mut g = 0.0;
+                    for (a, &l) in active.iter().enumerate() {
+                        g += pk[i * n + l] * t[l] * inv[a * m + b];
+                    }
+                    gain[i * n + j] = g;
+                }
+            }
+        }
+        let mut next_x = xf[k * n..(k + 1) * n].to_vec();
+        for i in 0..n {
+            for j in 0..n {
+                next_x[i] += gain[i * n + j] * (xs[j] - xp[(k + 1) * n + j]);
+            }
+        }
+        // P_k + gain (P_smooth - P_next) gain'
+        for i in 0..n {
+            for j in 0..n {
+                let mut v = 0.0;
+                for l in 0..n {
+                    v += gain[i * n + l] * (ps[l * n + j] - pnext[l * n + j]);
+                }
+                tmp[i * n + j] = v;
+            }
+        }
+        let mut next_p = pk.to_vec();
+        for i in 0..n {
+            for j in 0..n {
+                let mut v = 0.0;
+                for l in 0..n {
+                    v += tmp[i * n + l] * gain[j * n + l];
+                }
+                next_p[i * n + j] += v;
+            }
+        }
+        xs = next_x;
+        ps = next_p;
+        out[k] = Point { mean: xs[0], sd: ps[0].max(0.0).sqrt() };
+    }
+    out
+}
+
+fn smooth_plain(shocks: &[f64], start: usize, end: usize, marks: &[MarkIn], prints: &[PrintIn], d: &Dynamics) -> Vec<Point> {
+    let n = end + 1 - start;
+    let mut prints_by_day: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (i, p) in prints.iter().enumerate() {
+        if p.idx >= start && p.idx <= end {
+            prints_by_day[p.idx - start].push(i);
+        }
+    }
+    let mut by_day: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for (i, m) in marks.iter().enumerate() {
+        if m.asof_idx >= start && m.asof_idx <= end {
+            by_day[m.asof_idx - start].push(i);
+        }
+    }
+
+    // Extra variance per day from jumps. A first pass finds the quarters
+    // that more likely than not contained a jump. Enough variance to reach
+    // the mark is then spread over the days since the previous one, because
+    // nothing says when in the quarter the jump happened. The second pass is
+    // the one that is smoothed.
+    let mut extra = vec![0.0; n];
+    let (mut mp, mut pp) = (vec![0.0; n], vec![0.0; n]); // predicted
+    let (mut mf, mut pf) = (vec![0.0; n], vec![0.0; n]); // filtered
+    let mut slope = vec![1.0; n];
+    for pass in 0..2 {
+        let (mut m, mut p) = (d.prior_mean, d.prior_sd * d.prior_sd);
+        let mut last_obs = 0;
+        for k in 0..n {
+            if k > 0 {
+                let shock = shocks[start + k];
+                let a = d.slope(m, shock);
+                let q = d.daily_var(m) + extra[k];
+                m = (m + d.drift(m) + d.beta(m) * shock).clamp(0.0, 1.1);
+                p = a * a * p + q;
+                slope[k] = a;
+            }
+            mp[k] = m;
+            pp[k] = p;
+            for (j, &i) in by_day[k].iter().enumerate() {
+                let mk = &marks[i];
+                let noise = mk.noise * d.noise_scale(m);
+                let r2 = noise * noise;
+                if pass == 0 && j == 0 && k > last_obs {
+                    let innov = mk.implied() - m;
+                    if d.jump_weight(innov, p + r2) > 0.5 {
+                        let per_day = (innov * innov - (p + r2)).max(0.0) / (k - last_obs) as f64;
+                        for e in extra[last_obs + 1..=k].iter_mut() {
+                            *e = per_day;
+                        }
+                    }
+                }
+                let s = p + r2;
+                if s > 0.0 {
+                    let gain = p / s;
+                    m += gain * (mk.implied() - m);
+                    p *= 1.0 - gain;
+                }
+            }
+            for &i in &prints_by_day[k] {
+                let s = p + prints[i].var;
+                if s > 0.0 {
+                    let gain = p / s;
+                    m += gain * (prints[i].price - m);
+                    p *= 1.0 - gain;
+                }
+            }
+            if !by_day[k].is_empty() || !prints_by_day[k].is_empty() {
+                last_obs = k;
+            }
+            mf[k] = m;
+            pf[k] = p;
+        }
+        if pass == 0 && extra.iter().all(|e| *e == 0.0) {
+            break;
+        }
+    }
+
+    let mut out = vec![Point::default(); n];
+    let (mut ms, mut ps) = (mf[n - 1], pf[n - 1]);
+    out[n - 1] = Point { mean: ms, sd: ps.max(0.0).sqrt() };
+    for k in (0..n - 1).rev() {
+        let g = if pp[k + 1] > 0.0 { pf[k] * slope[k + 1] / pp[k + 1] } else { 0.0 };
+        ms = mf[k] + g * (ms - mp[k + 1]);
+        ps = pf[k] + g * g * (ps - pp[k + 1]);
+        out[k] = Point { mean: ms, sd: ps.max(0.0).sqrt() };
+    }
+    out
+}

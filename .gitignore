@@ -1,5 +1,6 @@
 # Build output
 /bin/
+/kernel/target/
 
 # Inputs and generated data. The SEC archives are large and public; the panel
 # is rebuilt from them.

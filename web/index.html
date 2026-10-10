@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#e7ebe5" />
+    <meta
+      name="description"
+      content="A daily price, with an honest error bar, for private loans that never trade."
+    />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <title>Syndicate</title>
+    <script>
+      // Apply the saved theme before anything is painted, so a dark-mode
+      // visitor never sees a flash of the light page.
+      try {
+        if (localStorage.getItem("syndicate-theme") === "dark") {
+          document.documentElement.dataset.theme = "dark";
+          document.querySelector('meta[name="theme-color"]').content = "#0c1310";
+          document.querySelector('meta[name="color-scheme"]').content = "dark";
+        }
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

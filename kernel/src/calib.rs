@@ -846,3 +846,26 @@ pub fn marks_for(obs: &[Obs], fit: &Fit) -> Vec<MarkIn> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shocks_fill_gaps_forward() {
+        let (filled, shocks) = shocks_from(&[f64::NAN, 2.0, f64::NAN, 2.5, 2.4]);
+        assert_eq!(filled, vec![2.0, 2.0, 2.0, 2.5, 2.4]);
+        assert_eq!(shocks[0], 0.0);
+        assert_eq!(shocks[2], 0.0);
+        assert!((shocks[3] + 0.5).abs() < 1e-12);
+        assert!((shocks[4] - 0.1).abs() < 1e-12);
+    }
+
+    #[test]
+    fn quarter_ends_are_month_ends() {
+        assert_eq!(quarter_end(crate::data::year_month(20240331)), 20240331);
+        assert_eq!(quarter_end(crate::data::year_month(20240229)), 20240229);
+        assert_eq!(quarter_end(crate::data::year_month(20230228)), 20230228);
+        assert_eq!(quarter_end(crate::data::year_month(20251231) + 3), 20260331);
+    }
+}

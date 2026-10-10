@@ -1,10 +1,17 @@
 # Build output
 /bin/
 /kernel/target/
+/web/dist/
+/web/node_modules/
+/web/public/*.wasm
 
 # Inputs and generated data. The SEC archives are large and public; the panel
-# is rebuilt from them.
+# and everything the site reads are rebuilt from them by scripts/pipeline.sh.
 /data/
+/web/public/data/
+
+# Local toolchain settings
+/scripts/env.ps1
 
 # Scratch
 /.cache/

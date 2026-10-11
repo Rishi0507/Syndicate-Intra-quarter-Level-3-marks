@@ -657,3 +657,334 @@ tr:last-child td {
   height: 10px;
   border-radius: 3px;
 }
+
+/* ---- The market page --------------------------------------------------- */
+
+.lead {
+  display: grid;
+  gap: var(--gutter);
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  align-items: start;
+}
+.pitch {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+  padding: clamp(6px, 1.4vw, 18px) clamp(2px, 1vw, 12px) 0;
+}
+.pitch h1 {
+  font-size: var(--fs-7);
+  font-weight: 650;
+  line-height: 1.02;
+  letter-spacing: -0.022em;
+  font-variation-settings: "wdth" 112;
+  text-wrap: balance;
+}
+.pitch > p {
+  max-width: 46ch;
+  font-size: var(--fs-3);
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+.facts {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid var(--glass-line);
+}
+.facts button {
+  display: block;
+  align-self: stretch;
+  vertical-align: top;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-right: 1px solid var(--glass-line);
+  padding: 14px 14px 4px 0;
+  margin-right: 14px;
+  cursor: pointer;
+}
+.facts button:last-child {
+  border-right: 0;
+  margin-right: 0;
+}
+.facts b {
+  display: block;
+  font-size: var(--fs-5);
+  font-weight: 600;
+  line-height: 1.1;
+  font-variation-settings: "wdth" 108;
+}
+.facts span {
+  font-size: var(--fs-0);
+  color: var(--ink-3);
+  line-height: 1.35;
+  display: block;
+  margin-top: 4px;
+}
+.facts button:hover b {
+  color: var(--inferred);
+}
+
+.search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 16px;
+  height: 48px;
+  border-radius: var(--radius-chip);
+}
+.search svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: none;
+  stroke: var(--ink-3);
+}
+.search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  outline: none;
+  font-size: var(--fs-2);
+}
+.search input::placeholder {
+  color: var(--ink-3);
+}
+.search:focus-within {
+  border-color: var(--inferred);
+}
+.results {
+  position: absolute;
+  z-index: 6;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  border-radius: var(--radius-in);
+}
+.results button,
+.movers button {
+  width: 100%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  font-size: var(--fs-1);
+}
+.results button {
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+.results button[aria-selected="true"],
+.results button:hover {
+  background: var(--hover-1);
+}
+.results small,
+.movers small {
+  color: var(--ink-3);
+  font-size: var(--fs-0);
+}
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 7px;
+}
+
+.movers {
+  padding: 16px 18px 8px;
+}
+.movers h3 {
+  margin-bottom: 4px;
+}
+.movers ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.movers li {
+  border-bottom: 1px solid var(--grid);
+}
+.movers li:last-child {
+  border-bottom: 0;
+}
+.movers button {
+  padding: 9px 0;
+}
+.movers button:hover span:first-child {
+  text-decoration: underline;
+  text-decoration-color: var(--inferred);
+  text-underline-offset: 3px;
+}
+.movers .chg {
+  color: var(--down);
+  white-space: nowrap;
+}
+.movers .px {
+  white-space: nowrap;
+  text-align: right;
+}
+
+/* The loan sheet. */
+.loan {
+  padding: clamp(16px, 2vw, 24px);
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1fr);
+  scroll-margin-top: 12px;
+}
+.loan-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.loan-head h2 {
+  font-size: var(--fs-4);
+}
+.loan-head p {
+  color: var(--ink-3);
+  font-size: var(--fs-1);
+  margin-top: 2px;
+}
+.estimate {
+  text-align: right;
+  margin-left: auto;
+}
+.estimate b {
+  display: block;
+  font-size: var(--fs-6);
+  font-weight: 600;
+  line-height: 1;
+  font-variation-settings: "wdth" 108;
+  letter-spacing: -0.02em;
+}
+.estimate span {
+  color: var(--inferred);
+  font-size: var(--fs-2);
+  font-weight: 500;
+}
+.loan-foot {
+  display: grid;
+  gap: 18px 26px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  border-top: 1px solid var(--glass-line);
+  padding-top: 16px;
+}
+.section h3 {
+  font-size: var(--fs-1);
+  color: var(--ink-2);
+  font-weight: 500;
+}
+.ticket {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: stretch;
+  text-align: center;
+  overflow: hidden;
+}
+.ticket div {
+  padding: 12px 8px 10px;
+}
+.ticket .mid {
+  border-left: 1px solid var(--glass-line);
+  border-right: 1px solid var(--glass-line);
+  padding-left: 16px;
+  padding-right: 16px;
+  display: grid;
+  align-content: center;
+}
+.ticket b {
+  display: block;
+  font-size: var(--fs-5);
+  font-weight: 600;
+  line-height: 1.1;
+  font-variation-settings: "wdth" 104;
+}
+.ticket .mid b {
+  font-size: var(--fs-2);
+  font-weight: 500;
+  color: var(--inferred);
+}
+.ticket span {
+  font-size: var(--fs-0);
+  color: var(--ink-3);
+}
+.quote-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  text-align: center;
+}
+.quote-row div {
+  padding: 12px 8px;
+}
+.quote-row b {
+  display: block;
+  font-size: var(--fs-5);
+  font-weight: 500;
+  line-height: 1.1;
+  font-variation-settings: "wdth" 104;
+}
+.quote-row span {
+  font-size: var(--fs-0);
+  color: var(--ink-3);
+}
+.stack {
+  display: flex;
+  height: 10px;
+  gap: 2px;
+  margin: 12px 0 6px;
+}
+.stack i {
+  display: block;
+  min-width: 2px;
+  border-radius: 3px;
+}
+
+/* The map. */
+.map-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px 28px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+.scale {
+  min-width: 240px;
+  font-size: var(--fs-0);
+  color: var(--ink-3);
+}
+.scale i {
+  display: block;
+  height: 8px;
+  border-radius: 4px;
+  margin: 5px 0 3px;
+}
+.scale div {
+  display: flex;
+  justify-content: space-between;
+}
+.map {
+  position: relative;
+  height: clamp(380px, 56vh, 620px);
+  border-radius: var(--radius-in);
+  overflow: hidden;
+}
+.map canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}

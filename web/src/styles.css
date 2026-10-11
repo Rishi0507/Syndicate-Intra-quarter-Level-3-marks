@@ -331,3 +331,329 @@ a {
 .icon-btn:hover {
   background: var(--hover-1);
 }
+
+/* ---- Views and their transitions --------------------------------------- */
+
+.view {
+  position: relative;
+  min-height: 0;
+}
+.view--scroll {
+  overflow-y: auto;
+  padding: var(--gutter);
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+.view[data-phase="out"] {
+  animation: view-out 170ms ease-in forwards;
+}
+.view[data-phase="in"] .page > * {
+  animation: pane-in 460ms var(--ease-out) both;
+}
+.view[data-phase="in"] .page > :nth-child(2) {
+  animation-delay: 60ms;
+}
+.view[data-phase="in"] .page > :nth-child(3) {
+  animation-delay: 120ms;
+}
+.view[data-phase="in"] .page > :nth-child(n + 4) {
+  animation-delay: 170ms;
+}
+@keyframes view-out {
+  to {
+    opacity: 0;
+    transform: translateX(calc(var(--dir, 1) * -28px));
+  }
+}
+@keyframes pane-in {
+  from {
+    opacity: 0;
+    transform: translateX(calc(var(--dir, 1) * 36px));
+  }
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 420ms;
+  animation-timing-function: ease;
+}
+
+.page {
+  max-width: 1240px;
+  margin: 0 auto;
+  display: grid;
+  gap: var(--gutter);
+  grid-template-columns: minmax(0, 1fr);
+  padding-bottom: 28px;
+}
+.pane {
+  padding: clamp(18px, 2.4vw, 30px);
+}
+.pane > header {
+  margin-bottom: 20px;
+}
+h2 {
+  font-size: var(--fs-4);
+  font-weight: 600;
+  line-height: 1.2;
+  font-variation-settings: "wdth" 104;
+  letter-spacing: -0.005em;
+}
+h3 {
+  font-size: var(--fs-2);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.lede {
+  margin-top: 8px;
+  max-width: 62ch;
+  font-size: var(--fs-2);
+  color: var(--ink-2);
+}
+.note {
+  font-size: var(--fs-0);
+  line-height: 1.5;
+  color: var(--ink-3);
+  max-width: 78ch;
+}
+.footer {
+  font-size: var(--fs-0);
+  line-height: 1.55;
+  color: var(--ink-3);
+  max-width: 96ch;
+}
+.loading {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--ink-2);
+  position: relative;
+  z-index: 1;
+}
+
+/* ---- Small parts ------------------------------------------------------- */
+
+.stats {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+.stat {
+  padding: 14px 16px;
+  display: grid;
+  gap: 2px;
+  align-content: start;
+}
+.stat span {
+  font-size: var(--fs-0);
+  color: var(--ink-3);
+}
+.stat b {
+  font-size: var(--fs-5);
+  font-weight: 500;
+  line-height: 1.15;
+  font-variation-settings: "wdth" 106;
+}
+.stat em {
+  font-style: normal;
+  font-size: var(--fs-0);
+  color: var(--ink-2);
+}
+.cols {
+  display: grid;
+  gap: var(--gutter);
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+}
+.cols--wide {
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+}
+.btn {
+  border: 1px solid var(--glass-line);
+  background: var(--inset-fill);
+  padding: 6px 14px;
+  border-radius: var(--radius-chip);
+  font-size: var(--fs-1);
+  cursor: pointer;
+}
+.btn:hover {
+  background: var(--hover-1);
+}
+.btn[aria-pressed="true"] {
+  background: var(--accent-wash);
+  border-color: var(--inferred);
+}
+.btn--quiet {
+  border-color: transparent;
+  background: none;
+  color: var(--ink-2);
+}
+.seg {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: var(--radius-chip);
+  border: 1px solid var(--glass-line);
+  background: var(--inset-fill);
+}
+.seg button {
+  border: 0;
+  background: none;
+  padding: 6px 13px;
+  border-radius: var(--radius-chip);
+  font-size: var(--fs-1);
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.seg button[aria-pressed="true"] {
+  background: var(--accent-wash);
+  color: var(--ink-1);
+}
+.controls {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+}
+.field {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 10px;
+  font-size: var(--fs-1);
+}
+.field label {
+  color: var(--ink-2);
+}
+.field input[type="range"] {
+  grid-column: 1 / -1;
+  width: 100%;
+  accent-color: var(--inferred);
+  height: 22px;
+}
+.field small {
+  grid-column: 1 / -1;
+  color: var(--ink-3);
+  font-size: var(--fs-0);
+  line-height: 1.35;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-1);
+}
+th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--ink-3);
+  font-size: var(--fs-0);
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--glass-line);
+  white-space: nowrap;
+}
+th.r {
+  text-align: right;
+}
+th button {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  color: inherit;
+}
+th[aria-sort] button {
+  color: var(--ink-1);
+}
+td {
+  padding: 8px;
+  border-bottom: 1px solid var(--grid);
+}
+tr:last-child td {
+  border-bottom: 0;
+}
+
+/* ---- Charts ------------------------------------------------------------ */
+
+.chart {
+  position: relative;
+  width: 100%;
+}
+.chart svg {
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+.chart text {
+  fill: var(--ink-3);
+  font-size: 11px;
+  font-family: var(--font);
+  font-variation-settings: "wdth" 88;
+  font-variant-numeric: tabular-nums;
+}
+.chart .tick-line {
+  stroke: var(--grid);
+}
+.chart .axis-line {
+  stroke: var(--axis);
+}
+.chart .label {
+  fill: var(--ink-2);
+}
+.chart .value {
+  fill: var(--ink-1);
+}
+.tip {
+  position: absolute;
+  z-index: 4;
+  pointer-events: none;
+  padding: 8px 11px;
+  border-radius: 10px;
+  font-size: var(--fs-0);
+  line-height: 1.45;
+  white-space: nowrap;
+  background: var(--tip-fill);
+  border: 1px solid var(--glass-line);
+  box-shadow: var(--tip-shadow);
+}
+.tip b {
+  font-weight: 600;
+}
+.tip i {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  font-size: var(--fs-0);
+  color: var(--ink-2);
+  margin-bottom: 6px;
+}
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+.legend i {
+  width: 14px;
+  height: 2px;
+  border-radius: 1px;
+  background: currentColor;
+}
+.legend i.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.legend i.band {
+  height: 8px;
+  border-radius: 2px;
+  opacity: 0.35;
+}
+.legend i.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}

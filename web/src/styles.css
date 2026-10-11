@@ -988,3 +988,104 @@ tr:last-child td {
   height: 100%;
   cursor: pointer;
 }
+
+/* ---- Prose (the method page) ------------------------------------------- */
+
+.prose {
+  font-family: var(--serif);
+  font-size: 18px;
+  line-height: 1.62;
+  max-width: 72ch;
+  font-variation-settings: normal;
+}
+.prose p,
+.prose ul {
+  margin: 0 0 14px;
+}
+.prose ul {
+  padding-left: 20px;
+}
+.prose li {
+  margin-bottom: 8px;
+}
+.prose h3 {
+  font-family: var(--font);
+  font-size: var(--fs-3);
+  margin: 26px 0 8px;
+}
+.prose .katex {
+  font-size: 1.02em;
+}
+.prose .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 4px 0;
+}
+.pull {
+  font-family: var(--serif);
+  font-size: clamp(22px, 2.6vw, 32px);
+  line-height: 1.25;
+  max-width: 30ch;
+}
+blockquote cite {
+  display: block;
+  margin-top: 12px;
+  font-style: normal;
+  font-size: var(--fs-1);
+  color: var(--ink-3);
+  max-width: 70ch;
+}
+
+/* ---- Narrow screens ---------------------------------------------------- */
+
+@media (max-width: 1040px) {
+  .lead {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 720px) {
+  .nav {
+    flex-wrap: wrap;
+    border-radius: var(--radius);
+    padding: 10px 12px;
+  }
+  .tabs {
+    order: 3;
+    flex-basis: 100%;
+    margin-left: 0;
+  }
+  .source b {
+    display: none;
+  }
+  .facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .facts button {
+    border-right: 0;
+    border-bottom: 1px solid var(--glass-line);
+    margin-right: 0;
+    padding-bottom: 12px;
+  }
+  .estimate {
+    text-align: left;
+    margin-left: 0;
+  }
+  .estimate b {
+    font-size: var(--fs-5);
+  }
+  .map {
+    height: 420px;
+  }
+  .prose {
+    font-size: 17px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

@@ -225,3 +225,28 @@ pub fn report(panel: &Panel) -> Json {
                 .with("auc_dispersion_performing", Json::round(auc_performing, 4)),
         )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auc_of_a_perfect_and_a_useless_score() {
+        let mut perfect: Vec<(f64, bool)> = (0..100).map(|i| (i as f64, i >= 50)).collect();
+        assert!((auc(&mut perfect) - 1.0).abs() < 1e-12);
+        let mut inverted: Vec<(f64, bool)> = (0..100).map(|i| (i as f64, i < 50)).collect();
+        assert!(auc(&mut inverted).abs() < 1e-12);
+        // A constant score cannot rank anything.
+        let mut flat: Vec<(f64, bool)> = (0..100).map(|i| (1.0, i % 2 == 0)).collect();
+        assert!((auc(&mut flat) - 0.5).abs() < 1e-12);
+        assert!(auc(&mut [(1.0, true), (2.0, true)]).is_nan());
+    }
+
+    #[test]
+    fn buckets_split_at_the_stress_thresholds() {
+        assert_eq!(bucket(0.99), 0);
+        assert_eq!(bucket(0.97), 0);
+        assert_eq!(bucket(0.95), 1);
+        assert_eq!(bucket(0.80), 2);
+    }
+}

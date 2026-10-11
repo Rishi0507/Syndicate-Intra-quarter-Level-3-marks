@@ -342,3 +342,57 @@ pub fn print_ladder(title: &str, records: &[&Record]) {
         println!("  {:<46} {:>8.3} {:>8.3} {:>7.1}%", label, s.mae * 100.0, s.rmse * 100.0, s.skill * 100.0);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::stats::Rng;
+
+    fn rec(ym: i32, price: f64, prev: f64, mean: f64, sd: f64) -> Record {
+        Record { inst: 0, family: 0, ym, price, prev, public_raw: (mean, sd), public: (mean, sd), peers: (mean, sd), full: (mean, sd), seen: 1 }
+    }
+
+    #[test]
+    fn conformal_quantile_is_the_finite_sample_rank() {
+        let s: Vec<f64> = (1..=9).map(|x| x as f64).collect();
+        // ceil(10 * 0.9) = 9th smallest.
+        assert_eq!(conformal_quantile(&s, 0.9), 9.0);
+        // ceil(10 * 0.95) = 10 > n: no finite bound is justified.
+        assert!(conformal_quantile(&s, 0.95).is_infinite());
+        assert_eq!(conformal_quantile(&s, 0.5), 5.0);
+    }
+
+    /// Errors with far fatter tails than the model claims: Gaussian intervals
+    /// must under-cover and conformal ones must not.
+    #[test]
+    fn conformal_repairs_fat_tails() {
+        let mut rng = Rng::new(5);
+        let mut records = Vec::new();
+        for q in 0..12 {
+            for _ in 0..400 {
+                // Student-t with 3 degrees of freedom, scaled to unit variance,
+                // while the "model" reports sd = 0.5.
+                let t = rng.normal() / ((rng.normal().powi(2) + rng.normal().powi(2) + rng.normal().powi(2)) / 3.0).sqrt();
+                let e = 0.01 * t / 3f64.sqrt();
+                records.push(rec(q * 3, 0.99 + e, 0.99, 0.99, 0.005));
+            }
+        }
+        let cov = coverage(&records);
+        let c = &cov[0].1;
+        assert!(c.n > 3000);
+        assert!(c.gaussian[2] < 0.86, "gaussian 90% coverage {}", c.gaussian[2]);
+        for (k, level) in LEVELS.iter().enumerate() {
+            assert!((c.conformal[k] - level).abs() < 0.02, "level {level}: {}", c.conformal[k]);
+        }
+    }
+
+    #[test]
+    fn skill_is_relative_to_stale() {
+        let rs = vec![rec(0, 0.95, 0.99, 0.96, 0.01), rec(0, 0.97, 0.99, 0.97, 0.01)];
+        let refs: Vec<&Record> = rs.iter().collect();
+        let stale = score(&refs, 0);
+        let model = score(&refs, 4);
+        assert_eq!(stale.skill, 0.0);
+        assert!(model.skill > 0.9 && model.rmse < stale.rmse);
+    }
+}

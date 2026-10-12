@@ -245,3 +245,101 @@ pub struct Census {
     pub sd_max: f64,
     pub sd_hist: Vec<f64>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A stressed, thinly followed loan with price-sensitive clients: a
+    /// market whose skeleton has both regimes.
+    pub fn bistable() -> Market {
+        Market {
+            desk: Desk { arrival: 2.0, decay: 8.0, gamma: 0.02, informed: 0.45, inventory: 0.0 },
+            daily_var: 0.0625,
+            mark_gap: 63.0,
+            mark_sd: 1.0,
+            print_sd: 0.35,
+            subsidy: 0.0,
+            subsidy_above: 0.0,
+        }
+    }
+
+    #[test]
+    fn rest_points_alternate_and_solve_the_equation() {
+        let m = bistable();
+        let rest = m.rest_points(1e-6, 1e4);
+        assert_eq!(rest.len(), 3, "{rest:?}");
+        assert!(rest[0].stable && !rest[1].stable && rest[2].stable);
+        for r in &rest {
+            assert!(m.drift(r.variance).abs() < 1e-9, "{r:?}");
+        }
+        // Lit is tight and busy; dark is wide and quiet.
+        assert!(rest[0].half_spread < 0.5 * rest[2].half_spread);
+        assert!(rest[0].trade_rate > 20.0 * rest[2].trade_rate);
+    }
+
+    #[test]
+    fn manifold_agrees_with_the_rest_points() {
+        let m = bistable();
+        for r in m.rest_points(1e-6, 1e4) {
+            let a = m.arrival_at_rest(r.variance);
+            assert!((a / m.desk.arrival - 1.0).abs() < 1e-6, "{r:?} -> {a}");
+        }
+    }
+
+    #[test]
+    fn the_fold_closes_at_both_ends() {
+        let m = bistable();
+        // Enough flow and only the lit regime exists.
+        let busy = Market { desk: Desk { arrival: 60.0, ..m.desk }, ..m };
+        let rest = busy.rest_points(1e-6, 1e4);
+        assert!(rest.len() == 1 && rest[0].stable && rest[0].trade_rate > 1.0);
+        // Too little and only the dark one does.
+        let dead = Market { desk: Desk { arrival: 0.01, ..m.desk }, ..m };
+        let rest = dead.rest_points(1e-6, 1e4);
+        assert!(rest.len() == 1 && rest[0].stable && rest[0].trade_rate < 0.01);
+    }
+
+    #[test]
+    fn simulation_is_reproducible_and_observations_only_reduce_variance() {
+        let m = bistable();
+        let a = m.simulate(1.0, 500, 9);
+        let b = m.simulate(1.0, 500, 9);
+        assert!(a.iter().zip(&b).all(|(x, y)| x.sd == y.sd && x.trades == y.trades));
+        // On a day with no observation the variance grows by exactly sigma^2.
+        for w in a.windows(2) {
+            if w[1].trades == 0 && !w[1].marked {
+                assert!((w[1].sd * w[1].sd - w[0].sd * w[0].sd - m.daily_var).abs() < 1e-9);
+            } else {
+                assert!(w[1].sd * w[1].sd < w[0].sd * w[0].sd + m.daily_var);
+            }
+        }
+    }
+
+    /// The claims the interface makes about what moves the balance between
+    /// regimes: more frequent marks, more flow and a subsidy for dark loans
+    /// each make a loan tradeable more of the time.
+    #[test]
+    fn marks_flow_and_subsidy_each_light_the_market() {
+        let m = bistable();
+        let base = m.census(200, 4);
+        assert!(base.tradeable > 0.05 && base.tradeable < 0.95, "base case should sit between regimes: {}", base.tradeable);
+
+        let monthly = Market { mark_gap: 21.0, ..m }.census(200, 4);
+        let daily = Market { mark_gap: 1.0, ..m }.census(200, 4);
+        assert!(monthly.tradeable > base.tradeable + 0.05, "monthly {} vs quarterly {}", monthly.tradeable, base.tradeable);
+        assert!(daily.tradeable > monthly.tradeable, "daily {} vs monthly {}", daily.tradeable, monthly.tradeable);
+        assert!(daily.mean_spread < monthly.mean_spread && monthly.mean_spread < base.mean_spread);
+
+        let busier = Market { desk: Desk { arrival: 2.0 * m.desk.arrival, ..m.desk }, ..m }.census(200, 4);
+        assert!(busier.tradeable > base.tradeable + 0.05);
+
+        // Support only for loans quoted wider than a point each side.
+        let helped = Market { subsidy: 0.3, subsidy_above: 0.5, ..m }.census(200, 4);
+        assert!(helped.tradeable > base.tradeable + 0.05, "helped {} vs base {}", helped.tradeable, base.tradeable);
+        assert!(helped.subsidy_per_year > 0.0 && base.subsidy_per_year == 0.0);
+
+        let hist: f64 = base.sd_hist.iter().sum();
+        assert!((hist - 1.0).abs() < 1e-9);
+    }
+}

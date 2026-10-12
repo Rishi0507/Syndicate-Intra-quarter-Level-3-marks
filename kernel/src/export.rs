@@ -407,3 +407,26 @@ pub fn export(build: &Path, out: &Path, factor: &str, min_train: usize, log: &mu
     }
     Ok(Summary { loans: n, marks: n_marks, bytes })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codes_span_their_ranges() {
+        assert_eq!(price_code(PRICE_LO), 0);
+        assert_eq!(price_code(PRICE_HI), 255);
+        assert_eq!(price_code(0.0), 0);
+        assert_eq!(price_code(2.0), 255);
+        assert_eq!(sd_code(0.0), 0);
+        assert_eq!(sd_code(SD_HI_POINTS / 100.0), 255);
+        // The square-root scale gives small errors most of the codes.
+        assert!(sd_code(0.003) > 50);
+    }
+
+    #[test]
+    fn binary_tables_are_little_endian() {
+        assert_eq!(u16s(&[0x0102]), vec![0x02, 0x01]);
+        assert_eq!(f32s(&[1.0]), 1.0f32.to_le_bytes().to_vec());
+    }
+}

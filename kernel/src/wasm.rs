@@ -167,3 +167,125 @@ pub unsafe extern "C" fn px_curve(
     }
     0
 }
+
+/// Daily variance of value at price `v`, including the expected contribution
+/// of jumps over a quarter of `days_per_quarter` days. Prices are fractions
+/// of par, as everywhere in the filter.
+///
+/// # Safety
+/// `dynamics` must address seventeen floats.
+#[no_mangle]
+pub unsafe extern "C" fn px_daily_var(dynamics: *const f64, v: f64, days_per_quarter: f64) -> f64 {
+    let d = Dynamics::from_slice(floats(dynamics, DYNAMICS_LEN));
+    d.daily_var(v) + d.jump_prob * d.jump_sd * d.jump_sd / days_per_quarter.max(1.0)
+}
+
+/// Quotes a loan. Writes ten values to `out`: mid, bid, ask, half-spread,
+/// processing, inventory risk, adverse selection, skew, bid rate, ask rate.
+/// Units are price points.
+///
+/// # Safety
+/// `desk` must address five floats and `out` ten.
+#[no_mangle]
+pub unsafe extern "C" fn px_quote(desk: *const f64, mid: f64, sd_now: f64, daily_var: f64, out: *mut f64) {
+    let q = quote::quote(&desk_from(floats(desk, 5)), mid, sd_now, daily_var);
+    let out = slice::from_raw_parts_mut(out, 10);
+    out.copy_from_slice(&[
+        q.mid,
+        q.bid,
+        q.ask,
+        q.half_spread,
+        q.processing,
+        q.inventory_risk,
+        q.adverse_selection,
+        q.skew,
+        q.bid_rate,
+        q.ask_rate,
+    ]);
+}
+
+/// The adverse selection half-spread per unit of standard error.
+#[no_mangle]
+pub extern "C" fn px_adverse_width(informed: f64) -> f64 {
+    quote::adverse_selection_width(informed)
+}
+
+/// Rest points of the skeleton. Writes up to `max` rows of four values:
+/// standard error, full spread, trades per day, 1 if stable. Returns the
+/// number written.
+///
+/// # Safety
+/// `market` must address eleven floats and `out` four times `max`.
+#[no_mangle]
+pub unsafe extern "C" fn px_rest(market: *const f64, out: *mut f64, max: usize) -> usize {
+    let m = market_from(floats(market, MARKET_LEN));
+    let rest = m.rest_points(1e-6, 1e4);
+    let out = slice::from_raw_parts_mut(out, 4 * max);
+    let n = rest.len().min(max);
+    for (i, r) in rest.iter().take(n).enumerate() {
+        out[4 * i] = r.variance.sqrt();
+        out[4 * i + 1] = 2.0 * r.half_spread;
+        out[4 * i + 2] = r.trade_rate;
+        out[4 * i + 3] = if r.stable { 1.0 } else { 0.0 };
+    }
+    n
+}
+
+/// For each standard error in `sd`, the arrival rate at which it is a rest
+/// point of the skeleton, with the market's own arrival rate ignored.
+///
+/// # Safety
+/// `market` must address eleven floats; `sd` and `out` must address `n`.
+#[no_mangle]
+pub unsafe extern "C" fn px_manifold(market: *const f64, sd: *const f64, n: usize, out: *mut f64) {
+    let m = market_from(floats(market, MARKET_LEN));
+    let sd = floats(sd, n);
+    let out = slice::from_raw_parts_mut(out, n);
+    for i in 0..n {
+        out[i] = m.arrival_at_rest(sd[i] * sd[i]);
+    }
+}
+
+/// One simulated history. Writes `days` rows of six values: standard error,
+/// full spread, trade rate, trades, subsidised trades, 1 if marks landed.
+///
+/// # Safety
+/// `market` must address eleven floats and `out` six times `days`.
+#[no_mangle]
+pub unsafe extern "C" fn px_simulate(market: *const f64, sd0: f64, days: usize, seed: f64, out: *mut f64) {
+    let m = market_from(floats(market, MARKET_LEN));
+    let steps = m.simulate(sd0 * sd0, days, seed as u64);
+    let out = slice::from_raw_parts_mut(out, 6 * days);
+    for (i, s) in steps.iter().enumerate() {
+        out[6 * i] = s.sd;
+        out[6 * i + 1] = s.spread;
+        out[6 * i + 2] = s.rate;
+        out[6 * i + 3] = s.trades as f64;
+        out[6 * i + 4] = s.subsidised as f64;
+        out[6 * i + 5] = if s.marked { 1.0 } else { 0.0 };
+    }
+}
+
+/// Number of histogram bins `px_census` writes after its six summary values.
+pub const CENSUS_BINS: usize = 40;
+
+/// Long-run behaviour from one simulated history of `years` years. Writes
+/// six summary values (share of days tradeable, mean spread, median spread,
+/// trades per year, subsidy per year, largest standard error) followed by a
+/// forty-bin histogram of the standard error over zero to that largest value.
+///
+/// # Safety
+/// `market` must address eleven floats and `out` forty-six.
+#[no_mangle]
+pub unsafe extern "C" fn px_census(market: *const f64, years: usize, seed: f64, out: *mut f64) {
+    let m = market_from(floats(market, MARKET_LEN));
+    let c = m.census(years.max(1), seed as u64);
+    let out = slice::from_raw_parts_mut(out, 6 + CENSUS_BINS);
+    out[0] = c.tradeable;
+    out[1] = c.mean_spread;
+    out[2] = c.median_spread;
+    out[3] = c.trades_per_year;
+    out[4] = c.subsidy_per_year;
+    out[5] = c.sd_max;
+    out[6..].copy_from_slice(&c.sd_hist);
+}

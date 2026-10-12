@@ -289,3 +289,111 @@ pub unsafe extern "C" fn px_census(market: *const f64, years: usize, seed: f64, 
     out[5] = c.sd_max;
     out[6..].copy_from_slice(&c.sd_hist);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The pointer interface must return exactly what the typed one does.
+    #[test]
+    fn curve_matches_the_typed_interface() {
+        let d = Dynamics::from_slice(&[
+            0.012, 0.1, 0.0006, 0.012, 0.0003, 0.0, 8.0, 0.992, 0.004, 0.0, 0.0001, -0.0005, 0.01, 0.1, 0.985, 0.03, 0.006,
+        ]);
+        let n_days = 200;
+        let shocks: Vec<f64> = (0..n_days).map(|t| 0.01 * ((t * 7 % 11) as f64 - 5.0)).collect();
+        let quarters = [63.0, 24302.0, 126.0, 24305.0];
+        let marks = [
+            24302.0, 63.0, 95.0, 0.97, f64::NAN, f64::NAN, 0.2, 0.001, 0.003, 0.7, 0.0, //
+            24302.0, 63.0, 101.0, 0.955, 0.985, 0.987, 0.0, -0.002, 0.004, 0.7, 1.0, //
+            24305.0, 126.0, 160.0, 0.90, 0.97, 0.969, 0.2, 0.001, 0.003, 0.7, 0.0,
+        ];
+        let sector = [24302.0, 100.0, -0.004, 1e-5];
+        let prints = [180.0, 0.905, 1e-5];
+        let (start, end) = (60, 199);
+        let n = end - start + 1;
+        let mut out = vec![0.0; 4 * n];
+        let mut fc = vec![0.0; 18];
+        let dv = d.to_vec();
+        let code = unsafe {
+            px_curve(
+                dv.as_ptr(), shocks.as_ptr(), n_days, quarters.as_ptr(), 2, marks.as_ptr(), 3, sector.as_ptr(), 1,
+                prints.as_ptr(), 1, start, end, out.as_mut_ptr(), fc.as_mut_ptr(),
+            )
+        };
+        assert_eq!(code, 0);
+
+        let typed_marks: Vec<MarkIn> = marks.chunks_exact(MARK_LEN).map(mark_from).collect();
+        let mut forecasts = Vec::new();
+        let mut path = Vec::new();
+        filter::run(
+            &Run {
+                shocks: &shocks,
+                start,
+                end,
+                quarters: &[(63, 24302), (126, 24305)],
+                marks: &typed_marks,
+                sector: &[SectorIn { ym: 24302, avail_idx: 100, value: -0.004, var: 1e-5 }],
+                prints: &[PrintIn { idx: 180, price: 0.905, var: 1e-5 }],
+            },
+            &d,
+            &mut forecasts,
+            Some(&mut path),
+        );
+        for k in 0..n {
+            assert_eq!(out[k], path[k].mean);
+            assert_eq!(out[n + k], path[k].sd);
+        }
+        // The print pins the value on its day, in real time and in hindsight.
+        assert!((out[180 - start] - 0.905).abs() < 0.003);
+        assert!((out[2 * n + 180 - start] - 0.905).abs() < 0.003);
+        // Hindsight is not always the narrower band. In a quarter that turned
+        // out to contain a jump it is wider than real time was, and rightly:
+        // real time did not yet know. What must hold is that both are finite
+        // and positive everywhere.
+        for k in 0..4 * n {
+            assert!(out[k].is_finite() && out[k] >= 0.0);
+        }
+        assert_eq!(fc[4], 0.0); // first mark of the date: nothing seen before it
+        assert_eq!(fc[10], 1.0); // second: one seen
+        assert!(unsafe { px_curve(dv.as_ptr(), shocks.as_ptr(), n_days, quarters.as_ptr(), 2, marks.as_ptr(), 3, sector.as_ptr(), 1, prints.as_ptr(), 1, 10, 5, out.as_mut_ptr(), fc.as_mut_ptr()) } != 0);
+    }
+
+    #[test]
+    fn buffers_round_trip() {
+        let p = px_alloc(16);
+        unsafe {
+            for i in 0..16 {
+                *p.add(i) = i as f64;
+            }
+            assert_eq!(*p.add(15), 15.0);
+            px_free(p, 16);
+        }
+    }
+
+    #[test]
+    fn quote_and_market_wrappers_agree_with_the_library() {
+        let desk = [0.2, 1.5, 0.05, 0.25, 1.0];
+        let mut out = [0.0; 10];
+        unsafe { px_quote(desk.as_ptr(), 96.5, 0.8, 0.01, out.as_mut_ptr()) };
+        let q = quote::quote(&desk_from(&desk), 96.5, 0.8, 0.01);
+        assert_eq!((out[1], out[2], out[6]), (q.bid, q.ask, q.adverse_selection));
+
+        let market = [2.0, 8.0, 0.02, 0.45, 0.0, 0.0625, 63.0, 1.0, 0.35, 0.0, 0.0];
+        let mut rest = [0.0; 20];
+        let n = unsafe { px_rest(market.as_ptr(), rest.as_mut_ptr(), 5) };
+        assert_eq!(n, 3);
+        assert_eq!((rest[3], rest[7], rest[11]), (1.0, 0.0, 1.0));
+        // The manifold returns the market's own arrival rate at each rest point.
+        let sds = [rest[0], rest[4], rest[8]];
+        let mut arr = [0.0; 3];
+        unsafe { px_manifold(market.as_ptr(), sds.as_ptr(), 3, arr.as_mut_ptr()) };
+        for a in arr {
+            assert!((a / 2.0 - 1.0).abs() < 1e-5, "{a}");
+        }
+        let mut census = [0.0; 6 + CENSUS_BINS];
+        unsafe { px_census(market.as_ptr(), 50, 3.0, census.as_mut_ptr()) };
+        assert!(census[0] > 0.0 && census[0] < 1.0);
+        assert!((census[6..].iter().sum::<f64>() - 1.0).abs() < 1e-9);
+    }
+}

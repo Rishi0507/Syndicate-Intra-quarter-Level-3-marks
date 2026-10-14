@@ -2,19 +2,26 @@
 
 **Intra-quarter Level 3 marks for private credit.**
 
-Syndicate estimates the fair value of private loans on every day between quarterly marks, attaches a
-calibrated confidence band to each estimate, and converts that uncertainty into an indicative
-two-sided quote. It runs on the loan-level schedules of investments that business development
+[![CI](https://github.com/Rishi0507/Syndicate-Intra-quarter-Level-3-marks/actions/workflows/ci.yml/badge.svg)](https://github.com/Rishi0507/Syndicate-Intra-quarter-Level-3-marks/actions/workflows/ci.yml)
+
+Syndicate estimates, for every day between quarterly filings, the mark that the lenders of a private
+loan would report, with a calibrated 90% band. It reads each loan through the lenders that hold it:
+once one holder has filed, the marks of the others can be anticipated, and so can the change in each
+lender's debt book. It runs on the loan-level schedules of investments that business development
 companies (BDCs) file with the SEC.
 
-| Metric            | Value                       |
-| ----------------- | --------------------------- |
-| Loans priced      | 15,255                      |
-| Lender families   | 95                          |
-| Marks             | 208,442                     |
-| Reporting periods | September 2022 to June 2026 |
+The estimate is a consensus mark, the value on which holders' marks agree once each lender's habits
+are removed. It is not an independent fair value.
 
-![Market page: a loan's daily estimate and band, the lender marks behind it, and an indicative quote](docs/market.jpg)
+| Metric                  | Value                                                   |
+| ----------------------- | ------------------------------------------------------- |
+| Loans                   | 15,951, from 15,608 borrowers                           |
+| Lender families         | 97, from 189 funds                                      |
+| Marks                   | 224,823 fund marks, combined into 152,405 manager marks |
+| Reporting periods       | September 2022 to June 2026                             |
+| Out-of-sample forecasts | 97,521, over ten quarters                               |
+
+![Market page: a loan's daily estimate and band, the marks lenders filed, and where each holder stands](docs/market.jpg)
 
 > **Disclaimer.** Syndicate is independent research built from public filings and does not
 > constitute investment advice. The site and its exported data identify lenders by code. Figures
@@ -23,168 +30,93 @@ companies (BDCs) file with the SEC.
 
 ## Contents
 
-- [Background](#background)
-- [Capabilities](#capabilities)
-- [Results](#results)
+- [Why it matters](#why-it-matters)
+- [Key results](#key-results)
+- [What the filings show about lenders](#what-the-filings-show-about-lenders)
+- [How it works](#how-it-works)
 - [Web application](#web-application)
-- [Architecture](#architecture)
 - [Data](#data)
 - [Getting started](#getting-started)
 - [Repository layout](#repository-layout)
-- [Methodology](#methodology)
+- [Documentation](#documentation)
 - [Limitations](#limitations)
 - [References](#references)
 
-## Background
+## Why it matters
 
-Private credit is increasingly expected to offer investors daily pricing and, over time, a secondary
-market. Large managers have announced daily valuations for private assets and have begun making
-markets in them. Almost none of the underlying loans has ever traded.
+Each BDC reports a fair value for every loan once a quarter, and the report becomes public weeks
+later. These loans are Level 3 assets: almost none of them trades, and between filings there is no
+observed price. A growing share of private credit sits in vehicles that issue and redeem shares
+between quarter ends, at net asset values built from those marks, and investors, allocators and
+risk teams need a view of where the marks stand in the meantime.
 
-These loans are Level 3 assets: their fair value rests on unobservable inputs. Each lender reports a
-mark at quarter end, and the filing becomes public several weeks later. Between filings there is no
-observed price.
+Many loans are held by more than one lender, and lenders file on different days. When more than
+one manager reports a performing loan for the same date, the highest and lowest marks are more than
+a point apart a third of the time. When one holder files, its mark is information about the loan for
+every holder that has not. Syndicate is built on that structure; the name refers to it.
 
-Quoting such a loan requires two numbers every day: an estimate of value, and a measure of
-confidence in that estimate. The second number sets the adverse-selection component of a dealer's
-spread and is rarely available. Syndicate produces both.
+## Key results
 
-The approach reads each loan through the lenders that hold it. When several lenders hold the same
-loan, their marks for the same reporting date differ, and those differences carry information about
-the loan and about each lender's marking behaviour. The name refers to that structure: one loan,
-held by a syndicate of lenders, each of which marks it independently.
+All results are out of sample. For each of ten quarters, from 2024 Q1 to 2026 Q2, the model is
+fitted on marks filed before the quarter ended and forecasts each mark of that quarter on the day
+before the lender files it. Forecasts are scored against the first-reported mark. Errors are in
+points, with par at 100.
 
-## Capabilities
+| Question                                                                 | Result                                                                              |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| Another lender has already filed the loan (34,958 forecasts, 36% of all) | 56% of squared error removed against the last mark                                  |
+| A peer has filed and the estimate has moved a point or more (7,300)      | Mean absolute error falls from 3.46 to 1.94 points                                  |
+| Each lender's quarterly debt book change, called the day before it files | 34% of the squared change anticipated; direction right in 175 of 192                |
+| All forecasts (97,521)                                                   | 16% of squared error removed                                                        |
+| 90% bands, performing, watch-list and stressed loans                     | Hold 87.8%, 88.3% and 90.4%; 7% to 12% narrower than a naive band at equal coverage |
 
-| Capability         | Description                                                                                                                                                                       |
-| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Filing ingestion   | Parses each free-text investment identifier into borrower, seniority and facility, and resolves borrower names that different lenders spell differently.                          |
-| Daily valuation    | A state-space filter rolls each loan's value forward and corrects it as marks are filed. Marks describe a date weeks in the past; the filter holds past values in its state.       |
-| Lender profiling   | Estimates how late each lender is with news, how high it marks relative to its peers, and how long its disagreements with them persist.                                           |
-| Calibrated bands   | Confidence bands are calibrated on out-of-sample forecast errors, and realised coverage is reported for each regime.                                                              |
-| Indicative quotes  | The bid-ask spread is decomposed into three charges. The adverse-selection charge is proportional to the standard error of the price.                                             |
-| Liquidity dynamics | Trades are modelled as measurements. The feedback between information and liquidity produces two regimes, and the model identifies the conditions that move a loan between them. |
+![Lenders page: each lender's quarterly book change, expected against reported](docs/books.jpg)
 
-## Results
+- **The value is in other holders' marks.** Where no other lender has filed, the estimate stays
+  close to the lender's own last mark and adds little. Most forecasts are of this kind. When the
+  estimate has moved by less than a quarter of a point it is no better than the last mark; when it
+  has moved by three points or more it removes 37% of squared error.
+- **The results survive a point-in-time rebuild.** Borrower matching and loan splitting use every
+  filing in the panel. Rebuilding the panel for each quarter from rows filed by then lowers the
+  share of squared error removed from 16% to 14% overall, from 56% to 47% where another lender had
+  filed, and leaves the book-level result at 37%. The rebuilt figures are the ones to expect in
+  real time.
+- **Fresh data agrees.** 2026 Q2, mostly from reports filed in August 2026 and added after the
+  model and every cleaning rule were fixed, shows 15% of squared error removed across 11,215
+  forecasts, in line with earlier quarters.
+- **Restatements do not drive the results.** Of 92,861 marks that later filings repeat as
+  comparatives, 0.7% change by more than a tenth of a point.
 
-### Out-of-sample accuracy
+![Evidence page: the point-in-time audit, quarter by quarter](docs/audit.jpg)
 
-The panel covers the SEC BDC data sets from September 2022 to June 2026: 1.8 million schedule rows
-from 184 funds, resolved to 14,931 borrowers and 15,255 loans, of which 3,418 are marked by more than
-one manager.
+Full tables, including results by regime, by quarter and by realised move, the band comparison, the
+ablation of a tested component and the software verification on a synthetic market, are in
+[docs/results.md](docs/results.md).
 
-All forecasts are out of sample. For each of ten quarters, 2024 Q1 to 2026 Q2, the model is fitted
-only on marks filed before the quarter ended and then forecasts each mark of that quarter on the day
-before the lender files. In total, 88,123 forecasts are scored against the marks lenders
-subsequently reported.
+## What the filings show about lenders
 
-| Information used                                   |  MAE | RMSE | Squared error removed |
-| -------------------------------------------------- | ---: | ---: | --------------------: |
-| Last mark carried forward                          | 1.20 | 3.93 |                       |
-| Rolled forward with public spreads and pull to par | 1.47 | 4.40 |                  −25% |
-| With each lender's habits modelled                 | 1.23 | 3.86 |                    4% |
-| With other lenders' marks of the same loan         | 1.09 | 3.60 |                   16% |
-| With sector repricing from other loans             | 1.09 | 3.60 |                   16% |
+These are read from the marks, before any forecasting.
 
-Errors are in price points, with par at 100. Each row adds one source of information to the row
-above it.
-
-- **A standard filter underperforms the naive benchmark.** Treating marks as fair value plus
-  independent noise, rolled forward with public credit spreads, produces a forecast 25% worse than
-  carrying the last mark forward.
-- **Lender offsets are persistent.** Modelling each lender's distance from its peers as a persistent
-  habit rather than noise restores parity with the last mark. Before a second lender has filed,
-  little further information is available.
-- **Peer marks carry the information.** Once another holder of the loan has filed, 58% of squared
-  error is removed (31,518 forecasts; RMSE falls from 3.12 to 2.02).
-- **Sector repricing adds no measurable accuracy on observed marks.** The component improves
-  accuracy in simulation but contributes nothing on these filings.
-
-The model outperforms the last mark in each of the ten quarters and in each regime, removing 11% of
-squared error for performing loans, 25% for watch-list loans and 14% for stressed loans.
-
-### Band calibration
-
-| Loans      | Stated 90% band held | Gaussian band held | Width against a naive band |
-| ---------- | -------------------: | -----------------: | -------------------------: |
-| Performing |                87.7% |              77.8% |               18% narrower |
-| Watch list |                87.7% |              56.5% |                9% narrower |
-| Stressed   |                90.2% |              73.1% |               11% narrower |
-
-For performing and watch-list loans, the calibrated bands fall about two points short of their
-stated coverage, against a much larger shortfall for Gaussian bands. In 2026 Q1, a quarter of
-performing loans moved by more than one point, compared with a fifth or fewer in every earlier
-quarter, and bands calibrated on prior quarters did not anticipate the shift. The shortfall is
-reported rather than tuned away.
-
-![First Brands Group: eighteen lenders' marks, the daily estimate and its band, and an indicative quote](docs/loan.jpg)
-
-### Empirical findings
-
-The following are estimated from the filings and reported by `syndicate fit data/build`.
-
-- **Disagreement persists.** 73% of the distance between one lender's mark and its peers' marks on
-  the same loan remains a quarter later. On a third of performing loans held by more than one
-  manager, the highest and lowest marks are more than one point apart.
-- **Lenders incorporate bad news with a lag.** When the other holders mark a loan down by one point
-  or more, a lender's own mark absorbs about three quarters of the move in the same quarter and the
-  remainder in the next. Where peers already mark the loan below 97 and the lender does not, the
-  adjustment is slower.
+- **Disagreement persists.** 72% of the distance between one lender's mark and its peers' marks on
+  the same loan remains a quarter later. Most of it is a standing view of the loan, not noise.
+- **Some news reaches marks late.** When the other holders of a loan mark it by a point or more and
+  a lender does not, 20% of their move reaches that lender's mark in the next quarter. The other
+  holders themselves move a further 13% the same way, so only part of the 20% is late marking and
+  the rest is a trend in value. Estimates of lateness are upper bounds.
+- **Marks are pulled toward par from both sides**, by 14% per quarter from below and 26% from above.
 - **Public credit spreads explain little.** They account for 0.6% of the quarterly variation in
   marks.
-- **Marks are pulled toward par from both sides**, by 14% per quarter from below and 26% from above.
-- **Disagreement does not predict distress.** It ranks which shared loans will be marked down three
-  points in the following quarter with an AUC of 0.65, but only because loans already in difficulty
-  are both disputed and fragile. Among performing loans the AUC is 0.48.
+- **Disagreement does not predict distress.** Among performing loans it ranks next quarter's
+  markdowns of three points or more no better than chance (AUC 0.49).
 
-### Validation on a synthetic market
+![Lenders page: timing, level and scatter for each lender, by code](docs/lenders.jpg)
 
-Observed data cannot confirm whether estimates between marks are correct, because the value is never
-observed. The repository therefore includes a generator that writes a market in the SEC's own file
-format, with the measurement structure found in the real filings and the true value of every loan
-recorded for every day. The same code runs on both.
-
-| Parameter set in the generator                 | True | Recovered |
-| ---------------------------------------------- | ---: | --------: |
-| Share of a disagreement carried a quarter      | 0.80 |      0.78 |
-| Share of an old mark carried, under stress     | 0.23 |      0.20 |
-| Pull to par, per quarter                       | 0.14 |      0.14 |
-| Public sensitivity, points per point of spread | 1.20 |      1.17 |
-
-Against the true value between marks, the typical error is 0.52 points, compared with 0.72 for the
-stale marks a holder would otherwise use, and the 90% band contains the true value 87% of the time.
-In simulation the model removes 48% of forecast error, considerably more than on real filings,
-because the simulated market has public spreads that matter and no shocks of a kind the model was
-not designed for. The exercise validates the machinery; it is not a forecast of performance on real
-data.
-
-`syndicate backtest data/synth/build` and `syndicate truth data/synth/build` reproduce these results.
-
-## Web application
-
-![Market map: one tile per loan, sized by amount lent and coloured by estimated price](docs/map.jpg)
-
-The interface is a static site with five pages.
-
-| Page     | Content                                                                                                                                                                                                      |
-| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Market   | One loan in focus: the current estimate and its 90% band, the daily estimate against every filed mark, and an indicative bid and ask. Below it, the full market as a treemap, one tile per loan, coloured by price. |
-| Lenders  | How each manager marks: timeliness, level relative to peers and distance from consensus.                                                                                                                     |
-| Desk     | Decomposition of the spread, and the feedback between trading and information.                                                                                                                               |
-| Evidence | Every result in this document, with charts.                                                                                                                                                                  |
-| Method   | The full mathematical specification.                                                                                                                                                                         |
-
-Every page and loan has its own address (`#/desk`, `#/loan/412`). Light and dark themes are
-supported and the selection persists between visits. Each page states whether it is displaying SEC
-filings or the synthetic market.
-
-![Market page in the dark theme](docs/dark.jpg)
-
-## Architecture
+## How it works
 
 ```mermaid
 flowchart LR
     SEC["SEC BDC<br/>data sets"] --> ING
+    EDG["EDGAR<br/>XBRL filings"] --> ING
     FRED["FRED credit<br/>spreads"] --> ING
     SYN["Synthetic<br/>market"] --> ING
     ING["Ingest<br/>(Go)"] --> PANEL["Panel<br/>of marks"]
@@ -194,18 +126,45 @@ flowchart LR
     WASM["Kernel<br/>(WebAssembly)"] --> WEB
 ```
 
-| Component | Language                       | Responsibility                                                                                                                                                           |
-| --------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `ingest`  | Go, standard library only      | Streams the Schedule of Investments out of each archive without unpacking it, parses identifiers, resolves borrowers, writes the panel and generates synthetic markets. |
-| `kernel`  | Rust, no external dependencies | Filter, estimation, walk-forward backtest, quote and liquidity model. One source builds a native command-line program and a 145 KB WebAssembly module.                  |
-| `web`     | TypeScript, React, three.js    | Static interface. Every curve and quote is computed in the browser by the WebAssembly kernel from the exported marks.                                                   |
+| Stage        | Approach                                                                                                                                                                                                                |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Marks        | A lender's view of a loan is the consensus value plus a level bias and a standing distance that fades slowly. A mark and the same lender's previous mark together measure the value now less a share of the value then. |
+| Delay        | Marks describe a quarter-end date and are published weeks later. A state-space filter keeps past values in its state, so a late mark corrects today's estimate exactly.                                                 |
+| Peers        | Other lenders' marks of the same loan are measurements of the same value, read through each lender's own habits.                                                                                                        |
+| Jumps        | The first mark of each quarter is tested against a jump, so a large fall is believed rather than discounted.                                                                                                            |
+| Estimation   | Six steps, each identified by a different slice of the marks. No model parameter is hand-set.                                                                                                                           |
+| Bands        | Split-conformal calibration, walk-forward and per regime.                                                                                                                                                               |
+| Lender books | Each lender's book is repriced daily by the move in the estimate of its loans since its latest filing was published.                                                                                                    |
 
-The browser and native builds are checked against each other: across 12,187 loan-days they agree to
-3 parts in 10 million, the precision of the single-precision marks that cross the wire. The full fit,
-ten-quarter backtest and export of the real panel completes in about nine seconds.
+| Component | Language                       | Responsibility                                                                                                                                         |
+| --------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ingest`  | Go, standard library only      | Streams the Schedule of Investments out of each archive, fills missing months from EDGAR, parses identifiers, resolves borrowers and writes the panel. |
+| `kernel`  | Rust, no external dependencies | Filter, estimation, backtest, audit and export. One source builds a native program and a 145 KB WebAssembly module.                                    |
+| `web`     | TypeScript and React           | Static interface. Every curve is recomputed in the browser by the WebAssembly kernel from the exported marks.                                          |
 
-Component diagrams, data flow and the build process are described in
+The browser and native builds agree to 3 parts in 10 million across 12,299 loan-days. The full fit,
+backtest and export of the real panel runs in about twelve seconds. The specification is in
+[docs/methodology.md](docs/methodology.md) and the system design in
 [docs/architecture.md](docs/architecture.md).
+
+## Web application
+
+The interface is a static site with five pages.
+
+| Page     | Content                                                                                                                                                    |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Market   | One loan in focus: the daily estimate and its 90% band against every filed mark, and where each holder stands. Below it, the whole market as a treemap.    |
+| Lenders  | Each lender's debt book, its move since the last filing, timing, level against peers and scatter, and how well each lender's quarter is called in advance. |
+| Evidence | Every result in this document, with charts, and the point-in-time audit.                                                                                   |
+| Method   | The full specification, with the fitted values.                                                                                                            |
+| Desk     | Exploratory. How the uncertainty of an estimate would carry into a dealer's spread and into liquidity, under stated assumptions.                           |
+
+Every page and loan has its own address (`#/lenders`, `#/loan/412`). Light and dark themes are
+supported, and each page states whether it shows SEC filings or the synthetic market.
+
+![Market map: one tile per loan, sized by amount lent and coloured by estimated price](docs/map.jpg)
+
+![Market page in the dark theme](docs/dark.jpg)
 
 ## Data
 
@@ -219,26 +178,15 @@ export SEC_CONTACT="Your Name you@example.com"
 bash scripts/pipeline.sh sec
 ```
 
-Alternatively, download the `*_bdc.zip` archives manually into `data/raw/sec` and run the same
-command without `SEC_CONTACT`.
-
-The SEC publishes the data sets monthly and can omit or delay a month. When `SEC_CONTACT` is set,
-the pipeline fills any uncovered month from the filings' own XBRL on EDGAR, in the same row format.
+The data sets are published monthly and a month can be missing or late. In October 2026 the SEC had
+not published August 2026, the month in which most second-quarter reports were filed. The pipeline
+fills any uncovered month from the filings' own XBRL on EDGAR, in the same row format; checked
+against a month the SEC did publish, the conversion reproduces the same marks.
 
 The repository contains no data. The archives, the panel and the files the site reads (`data/` and
-`web/public/data/`) are generated locally by the pipeline.
-
-The filings require substantial cleaning, and most of the ingest code exists for that purpose.
-Published column names do not match the columns that hold the values. Four families of free-text
-identifier are in use, some with the first letter of the borrower missing and some with schedule
-headings run into the name. Unfunded commitments resemble loans marked at zero, euro-denominated
-loans resemble loans marked at 108, and a small number of rows are a thousand times too large. A
-single borrower and seniority can conceal a first-out and a last-out piece, or new paper issued in a
-restructuring. Each case is handled by an explicit rule, and `data/build/ingest_report.json` counts
-the effect of every rule on every row. Of 1.84 million rows, 851,299 restate an earlier date in a
-later filing, 662,326 are dropped and 328,783 are kept.
-
-The cleaning rules and the panel schema are documented in [docs/data.md](docs/data.md).
+`web/public/data/`) are generated locally. Of 1.97 million schedule rows, 911,265 restate an earlier
+date in a later filing, 692,530 are removed by explicit cleaning rules and 361,876 are kept. The
+rules, the reconciliation from rows to marks and the panel schema are in [docs/data.md](docs/data.md).
 
 ## Getting started
 
@@ -260,74 +208,64 @@ cd web && npm install && npm run dev   # http://127.0.0.1:5173
 
 ```sh
 bash scripts/test.sh                   # Go tests, Rust tests, type check, browser against native
+bash scripts/vintage.sh                # backtest on panels rebuilt as they stood each quarter
 cd web && npm run build                # static site in web/dist
 ```
 
-`scripts/cargo.sh` runs cargo against the kernel manifest from anywhere in the repository. It uses
-`CARGO_HOME` and `RUSTUP_HOME` when they are set, for toolchains installed outside the default
-location.
+Continuous integration runs the Go, Rust and TypeScript checks on every pull request, then
+generates the synthetic market and runs the whole pipeline on it. `scripts/cargo.sh` runs cargo
+against the kernel manifest from anywhere in the repository and honours `CARGO_HOME` and
+`RUSTUP_HOME`.
 
 ## Repository layout
 
 ```text
-ingest/    Go          fetch, parse identifiers, resolve borrowers, build the panel, synthetic markets
-kernel/    Rust        filter, calibration, engine, evaluation, quote, liquidity, WebAssembly interface
+ingest/    Go          fetch, EDGAR fill, parse identifiers, resolve borrowers, build the panel, synthetic markets
+kernel/    Rust        filter, calibration, engine, evaluation, audit, export, WebAssembly interface
 web/       TypeScript  views, charts, data loading and kernel bindings
-scripts/   Bash        pipeline.sh, test.sh, cargo.sh
-docs/                  architecture, methodology, data notes and screenshots
+scripts/   Bash        pipeline.sh, test.sh, vintage.sh, cargo.sh
+docs/                  results, methodology, data, architecture and screenshots
+.github/               continuous integration
 ```
 
-## Methodology
+## Documentation
 
-The site's Method page and [docs/methodology.md](docs/methodology.md) contain the full
-specification. In summary:
-
-| Element        | Approach                                                                                                                                                                                                                                                                     | Source                                    |
-| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| Value          | A loan's value moves daily with a public credit spread, a shock shared by its sector and news of its own. Sensitivity and volatility rise as the loan becomes stressed.                                                                                                       | [`filter.rs`](kernel/src/filter.rs)       |
-| Marks          | A lender's view is fair value plus a level bias and a persistent distance. A mark and the same lender's previous mark together measure the value now less a share of the value then, with only the fresh part of the disagreement as noise.                                  | [`filter.rs`](kernel/src/filter.rs)       |
-| Delayed filing | On each reporting date the filter copies the current value into a state slot. A mark filed weeks later updates the slot and, through its correlation with the present, corrects today's estimate exactly.                                                                     | [`filter.rs`](kernel/src/filter.rs)       |
-| Smoothing      | A fair value cannot be forecast from its own past. If peers' marks last quarter predict a lender's change this quarter, that lender is marking late, by the ratio of two covariances. No public market is required.                                                          | [`calib.rs`](kernel/src/calib.rs)         |
-| Other loans    | Each loan is filtered alone, then receives the surprises of the other loans in its sector, week by week as they are filed, with its own excluded.                                                                                                                             | [`engine.rs`](kernel/src/engine.rs)       |
-| Jumps          | The first mark of each quarter is tested against a jump. The belief becomes a two-part mixture, collapsed back to a single Gaussian.                                                                                                                                         | [`filter.rs`](kernel/src/filter.rs)       |
-| Estimation     | Six steps, each identified by a different slice of the marks. No model parameter is hand-set; a short list of thresholds is fixed by design, such as the price of 97 below which a loan counts as stressed.                                                                  | [`calib.rs`](kernel/src/calib.rs)         |
-| Bands          | Split-conformal calibration, walk-forward and per regime, on the model's standard deviation plus the typical error of the regime.                                                                                                                                            | [`eval.rs`](kernel/src/eval.rs)           |
-| Quote          | Guéant, Lehalle and Fernandez-Tapia for making the market and carrying inventory; Glosten and Milgrom for adverse selection, which is linear in the price's standard error.                                                                                                  | [`quote.rs`](kernel/src/quote.rs)         |
-| Liquidity      | The variance of the market's estimate grows daily and is reduced by every mark and every trade. Trades arrive faster when the spread is tighter, and the spread is tighter when the variance is lower. The process is simulated exactly and reduced to an equation whose rest points fold. | [`liquidity.rs`](kernel/src/liquidity.rs) |
+| Document                                     | Content                                                                                       |
+| -------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| [docs/results.md](docs/results.md)           | Every result with its table: accuracy, lender books, bands, audit, ablation, lender findings. |
+| [docs/methodology.md](docs/methodology.md)   | The model, its estimation, what the marks identify, and the evaluation design.                |
+| [docs/data.md](docs/data.md)                 | Sources, the EDGAR fill, cleaning rules, borrower resolution and the panel schema.            |
+| [docs/architecture.md](docs/architecture.md) | Components, data flow, the static file contract, and how the build is verified.               |
 
 ## Limitations
 
-- **Consensus, not a traded price.** The estimate is where lenders would mark a loan today without
-  delay. Where every lender is too generous, so is the estimate.
-- **Single-lender loans.** Before a second lender has filed, the model knows little that the last
-  mark does not. Three quarters of these loans have one lender; for them the estimate is that
-  lender's mark rolled forward, with a band that reflects it.
+- **Consensus, not a traded price.** The estimate is where lenders would mark a loan without delay.
+  Where every holder is too generous, so is the estimate.
+- **Single-lender loans.** 12,426 of the 15,951 loans (78%) are held by one manager family over
+  their whole life. For them the estimate is that lender's mark rolled forward, with a band that
+  reflects it, and it adds little to the last mark.
 - **Early disagreement.** When a loan is first reported by two or three lenders that disagree, the
-  estimate can follow the wrong one for a quarter or two before the rest outweigh it. The band is
-  wide while it does.
-- **Identification of smoothing.** Smoothing is read from serial dependence, as is standard for
-  hedge funds and private equity. A loan whose true value fell steadily for its own reasons would be
-  indistinguishable from a lender marking it down late.
-- **Entity resolution.** Borrowers are matched across lenders by name and loan terms, and pieces of
-  one borrower's debt are separated by their marks. Both rule sets prefer leaving two records apart
-  to merging them, so some shared loans are missed and some merges are incorrect. Names are read by
-  rule from free text, and some are wrong.
-- **Desk assumptions.** The desk parameters, such as how many clients request quotes and how
-  aggressively they shop, cannot be estimated from marks. They are assumptions to be varied, and
-  every quote inherits them.
+  estimate can follow the wrong one for a quarter or two. The band is wide while it does.
+- **Identification of lateness.** Late marking and a trend in a loan's value produce the same
+  pattern in marks. The check described above bounds lateness from above; it does not identify it.
+- **Matching with hindsight.** Borrower matching and the splitting of loans into pieces improve
+  with later filings. The point-in-time rebuild measures the effect; the full-panel figures are
+  higher than what a user would have seen at the time.
+- **Entity resolution.** Borrowers are matched across lenders by name and loan terms. The rules
+  prefer leaving two records apart to merging them, so some shared loans are missed, and some names,
+  read by rule from free text, are wrong.
 - **Independence of lenders.** The model treats lenders' valuation errors as independent given the
   loan. Lenders that share a third-party valuation agent are less independent than that.
-- **Liquidity model.** The liquidity results describe a market that barely exists yet. One
-  prediction is testable with trade data: loans should trade most in the weeks after their lenders
-  file.
+- **Exploratory layer.** The quote and liquidity models on the Desk page depend on parameters that
+  marks cannot identify and have not been tested against trades.
 
 ## References
 
 - SEC, [Business Development Company data sets](https://www.sec.gov/data-research/sec-markets-data/bdc-data-sets)
 - Federal Reserve Bank of St. Louis, [FRED](https://fred.stlouisfed.org/)
+- M. Getmansky, A. Lo, I. Makarov, *An econometric model of serial correlation and illiquidity in hedge fund returns* (2004)
+- V. Vovk, A. Gammerman, G. Shafer, *Algorithmic learning in a random world* (2005)
 - O. Guéant, C.-A. Lehalle, J. Fernandez-Tapia, *Dealing with the inventory risk* (2013)
 - L. Glosten, P. Milgrom, *Bid, ask and transaction prices in a specialist market with heterogeneously informed traders* (1985)
 - R. Huang, H. Stoll, *The components of the bid-ask spread* (1997)
-- M. Getmansky, A. Lo, I. Makarov, *An econometric model of serial correlation and illiquidity in hedge fund returns* (2004)
 - M. Bruls, K. Huizing, J. van Wijk, *Squarified treemaps* (2000)
-- V. Vovk, A. Gammerman, G. Shafer, *Algorithmic learning in a random world* (2005)

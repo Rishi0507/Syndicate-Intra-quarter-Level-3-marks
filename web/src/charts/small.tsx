@@ -343,3 +343,73 @@ export function Histogram({ bins, max, color, height = 130, xFormat = (v) => v.t
     </div>
   );
 }
+
+export interface ScatterPoint {
+  x: number;
+  y: number;
+  color: string;
+  r?: number;
+}
+
+export function Scatter({
+  points,
+  limit,
+  size = 300,
+  xLabel,
+  yLabel,
+  format = (v) => v.toFixed(1),
+}: {
+  points: ScatterPoint[];
+  limit: number;
+  size?: number;
+  xLabel: string;
+  yLabel: string;
+  format?: (v: number) => string;
+}) {
+  const [ref, width] = useWidth<HTMLDivElement>();
+  const w = Math.min(width, size + 60);
+  const m = { top: 22, right: 12, bottom: 40, left: 46 };
+  const side = Math.max(120, Math.min(w - m.left - m.right, size));
+  const dom: [number, number] = [-limit, limit];
+  const sx = linear(dom, [m.left, m.left + side]);
+  const sy = linear(dom, [m.top + side, m.top]);
+  const grid = ticks(dom, 4);
+  return (
+    <div className="chart" ref={ref}>
+      {width > 0 && (
+        <svg width={m.left + side + m.right} height={m.top + side + m.bottom} role="img">
+          <text x={m.left} y={12} className="label">
+            {yLabel}
+          </text>
+          {grid.map((g) => (
+            <g key={g}>
+              <line className="tick-line" x1={m.left} x2={m.left + side} y1={sy(g)} y2={sy(g)} />
+              <text x={m.left - 8} y={sy(g)} dy="0.32em" textAnchor="end">
+                {format(g)}
+              </text>
+              <text x={sx(g)} y={m.top + side + 16} textAnchor="middle">
+                {format(g)}
+              </text>
+            </g>
+          ))}
+          <text x={m.left + side} y={m.top + side + 34} textAnchor="end" className="label">
+            {xLabel}
+          </text>
+          <line className="axis-line" x1={sx(-limit)} y1={sy(-limit)} x2={sx(limit)} y2={sy(limit)} />
+          {points.map((p, i) => (
+            <circle
+              key={i}
+              cx={sx(clamp(p.x, -limit, limit))}
+              cy={sy(clamp(p.y, -limit, limit))}
+              r={p.r ?? 3}
+              fill={p.color}
+              fillOpacity={0.55}
+              stroke={SURFACE}
+              strokeWidth={0.6}
+            />
+          ))}
+        </svg>
+      )}
+    </div>
+  );
+}

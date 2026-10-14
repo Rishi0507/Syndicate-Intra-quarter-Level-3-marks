@@ -82,6 +82,57 @@ fn auc(pairs: &mut [(f64, bool)]) -> f64 {
 
 const MARKDOWN: f64 = 0.03;
 
+const PEER_MOVE: f64 = 0.01;
+const STILL: f64 = 0.0025;
+const CLIP: f64 = 0.10;
+
+pub struct CatchUp {
+    pub n: usize,
+    pub follow: f64,
+    pub continuation: f64,
+}
+
+pub fn catch_up(panel: &Panel) -> CatchUp {
+    let mut price: HashMap<(usize, i32, usize), f64> = HashMap::new();
+    for o in &panel.obs {
+        price.insert((o.inst, o.ym, o.family), o.price);
+    }
+    let clip = |x: f64| x.clamp(-CLIP, CLIP);
+    let (mut follow, mut cont, mut den, mut n) = (0.0, 0.0, 0.0, 0usize);
+    for inst in 0..panel.instruments.len() {
+        let obs = panel.obs_of(inst);
+        for o in obs {
+            let (t, f) = (o.ym, o.family);
+            let (Some(&mid), Some(&old)) = (price.get(&(inst, t - 3, f)), price.get(&(inst, t - 6, f))) else { continue };
+            if (mid - old).abs() >= STILL {
+                continue;
+            }
+            let (mut last, mut now, mut k) = (0.0, 0.0, 0usize);
+            for g in obs.iter().filter(|g| g.ym == t && g.family != f) {
+                let (Some(&gm), Some(&go)) = (price.get(&(inst, t - 3, g.family)), price.get(&(inst, t - 6, g.family))) else { continue };
+                last += gm - go;
+                now += g.price - gm;
+                k += 1;
+            }
+            if k == 0 {
+                continue;
+            }
+            let (last, now) = (clip(last / k as f64), clip(now / k as f64));
+            if last.abs() < PEER_MOVE {
+                continue;
+            }
+            follow += clip(o.price - mid) * last;
+            cont += now * last;
+            den += last * last;
+            n += 1;
+        }
+    }
+    if den <= 0.0 {
+        return CatchUp { n, follow: f64::NAN, continuation: f64::NAN };
+    }
+    CatchUp { n, follow: follow / den, continuation: cont / den }
+}
+
 pub fn report(panel: &Panel) -> Json {
     let cs = cells(panel);
     let index: HashMap<(usize, i32), usize> = cs.iter().enumerate().map(|(i, c)| ((c.inst, c.ym), i)).collect();
@@ -178,8 +229,13 @@ pub fn report(panel: &Panel) -> Json {
     let auc_level = auc(&mut events.iter().map(|e| (-e.1, e.2)).collect::<Vec<_>>());
     let auc_performing = auc(&mut events.iter().filter(|e| e.1 >= 0.97).map(|e| (e.0, e.2)).collect::<Vec<_>>());
 
+    let lag = catch_up(panel);
     Json::obj()
         .with("shared_cells", shared.len())
+        .with(
+            "catch_up",
+            Json::obj().with("n", lag.n).with("follow", Json::round(lag.follow, 4)).with("continuation", Json::round(lag.continuation, 4)),
+        )
         .with("dispersion", dispersion)
         .with("dispersion_by_quarter", through_time)
         .with("leader", leader)
@@ -210,6 +266,41 @@ mod tests {
         let mut flat: Vec<(f64, bool)> = (0..100).map(|i| (1.0, i % 2 == 0)).collect();
         assert!((auc(&mut flat) - 0.5).abs() < 1e-12);
         assert!(auc(&mut [(1.0, true), (2.0, true)]).is_nan());
+    }
+
+    #[test]
+    fn catch_up_separates_the_follower_from_the_trend() {
+        use crate::data::{Class, Instrument, Obs};
+        let mark = |family: usize, ym: i32, price: f64| Obs {
+            inst: 0,
+            family,
+            asof: 0,
+            ym,
+            asof_idx: 0,
+            filed_idx: 0,
+            price,
+            principal: 1.0,
+            spread_bp: 0.0,
+            original: true,
+        };
+        let obs = vec![mark(0, 0, 0.99), mark(1, 0, 0.99), mark(0, 3, 0.99), mark(1, 3, 0.97), mark(0, 6, 0.98), mark(1, 6, 0.965)];
+        let panel = Panel {
+            source: "test".into(),
+            days: vec![20240101, 20240102],
+            factor_names: Vec::new(),
+            factors: Vec::new(),
+            families: vec!["a".into(), "b".into()],
+            sectors: vec!["other".into()],
+            holders: Vec::new(),
+            borrowers: Vec::new(),
+            instruments: vec![Instrument { borrower: 0, class: Class::Senior, piece: 0 }],
+            inst_obs: vec![(0, obs.len())],
+            obs,
+        };
+        let lag = catch_up(&panel);
+        assert_eq!(lag.n, 1);
+        assert!((lag.follow - 0.5).abs() < 1e-9, "follow {}", lag.follow);
+        assert!((lag.continuation - 0.25).abs() < 1e-9, "continuation {}", lag.continuation);
     }
 
     #[test]

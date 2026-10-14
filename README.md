@@ -7,6 +7,15 @@ calibrated confidence band to each estimate, and converts that uncertainty into 
 two-sided quote. It runs on the loan-level schedules of investments that business development
 companies (BDCs) file with the SEC.
 
+| Metric            | Value                       |
+| ----------------- | --------------------------- |
+| Loans priced      | 15,255                      |
+| Lender families   | 95                          |
+| Marks             | 208,442                     |
+| Reporting periods | September 2022 to June 2026 |
+
+![Market page: a loan's daily estimate and band, the lender marks behind it, and an indicative quote](docs/market.jpg)
+
 > **Disclaimer.** Syndicate is independent research built from public filings and does not
 > constitute investment advice. Lender names appear because they are disclosed in those filings.
 > Figures shown beside them are statistical estimates and are not findings about any manager's
@@ -31,6 +40,112 @@ loan, their marks for the same reporting date differ, and those differences carr
 the loan and about each lender's marking behaviour. The name refers to that structure: one loan,
 held by a syndicate of lenders, each of which marks it independently.
 
+## Capabilities
+
+| Capability         | Description                                                                                                                                                                       |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Filing ingestion   | Parses each free-text investment identifier into borrower, seniority and facility, and resolves borrower names that different lenders spell differently.                          |
+| Daily valuation    | A state-space filter rolls each loan's value forward and corrects it as marks are filed. Marks describe a date weeks in the past; the filter holds past values in its state.       |
+| Lender profiling   | Estimates how late each lender is with news, how high it marks relative to its peers, and how long its disagreements with them persist.                                           |
+| Calibrated bands   | Confidence bands are calibrated on out-of-sample forecast errors, and realised coverage is reported for each regime.                                                              |
+| Indicative quotes  | The bid-ask spread is decomposed into three charges. The adverse-selection charge is proportional to the standard error of the price.                                             |
+| Liquidity dynamics | Trades are modelled as measurements. The feedback between information and liquidity produces two regimes, and the model identifies the conditions that move a loan between them. |
+
+## Results
+
+### Out-of-sample accuracy
+
+The panel covers the SEC BDC data sets from September 2022 to June 2026: 1.8 million schedule rows
+from 184 funds, resolved to 14,931 borrowers and 15,255 loans, of which 3,418 are marked by more than
+one manager.
+
+All forecasts are out of sample. For each of ten quarters, 2024 Q1 to 2026 Q2, the model is fitted
+only on marks filed before the quarter ended and then forecasts each mark of that quarter on the day
+before the lender files. In total, 88,123 forecasts are scored against the marks lenders
+subsequently reported.
+
+| Information used                                   |  MAE | RMSE | Squared error removed |
+| -------------------------------------------------- | ---: | ---: | --------------------: |
+| Last mark carried forward                          | 1.20 | 3.93 |                       |
+| Rolled forward with public spreads and pull to par | 1.47 | 4.40 |                  −25% |
+| With each lender's habits modelled                 | 1.23 | 3.86 |                    4% |
+| With other lenders' marks of the same loan         | 1.09 | 3.60 |                   16% |
+| With sector repricing from other loans             | 1.09 | 3.60 |                   16% |
+
+Errors are in price points, with par at 100. Each row adds one source of information to the row
+above it.
+
+- **A standard filter underperforms the naive benchmark.** Treating marks as fair value plus
+  independent noise, rolled forward with public credit spreads, produces a forecast 25% worse than
+  carrying the last mark forward.
+- **Lender offsets are persistent.** Modelling each lender's distance from its peers as a persistent
+  habit rather than noise restores parity with the last mark. Before a second lender has filed,
+  little further information is available.
+- **Peer marks carry the information.** Once another holder of the loan has filed, 58% of squared
+  error is removed (31,518 forecasts; RMSE falls from 3.12 to 2.02).
+- **Sector repricing adds no measurable accuracy on observed marks.** The component improves
+  accuracy in simulation but contributes nothing on these filings.
+
+The model outperforms the last mark in each of the ten quarters and in each regime, removing 11% of
+squared error for performing loans, 25% for watch-list loans and 14% for stressed loans.
+
+### Band calibration
+
+| Loans      | Stated 90% band held | Gaussian band held | Width against a naive band |
+| ---------- | -------------------: | -----------------: | -------------------------: |
+| Performing |                87.7% |              77.8% |               18% narrower |
+| Watch list |                87.7% |              56.5% |                9% narrower |
+| Stressed   |                90.2% |              73.1% |               11% narrower |
+
+For performing and watch-list loans, the calibrated bands fall about two points short of their
+stated coverage, against a much larger shortfall for Gaussian bands. In 2026 Q1, a quarter of
+performing loans moved by more than one point, compared with a fifth or fewer in every earlier
+quarter, and bands calibrated on prior quarters did not anticipate the shift. The shortfall is
+reported rather than tuned away.
+
+![First Brands Group: eighteen lenders' marks, the daily estimate and its band, and an indicative quote](docs/loan.jpg)
+
+### Empirical findings
+
+The following are estimated from the filings and reported by `syndicate fit data/build`.
+
+- **Disagreement persists.** 73% of the distance between one lender's mark and its peers' marks on
+  the same loan remains a quarter later. On a third of performing loans held by more than one
+  manager, the highest and lowest marks are more than one point apart.
+- **Lenders incorporate bad news with a lag.** When the other holders mark a loan down by one point
+  or more, a lender's own mark absorbs about three quarters of the move in the same quarter and the
+  remainder in the next. Where peers already mark the loan below 97 and the lender does not, the
+  adjustment is slower.
+- **Public credit spreads explain little.** They account for 0.6% of the quarterly variation in
+  marks.
+- **Marks are pulled toward par from both sides**, by 14% per quarter from below and 26% from above.
+- **Disagreement does not predict distress.** It ranks which shared loans will be marked down three
+  points in the following quarter with an AUC of 0.65, but only because loans already in difficulty
+  are both disputed and fragile. Among performing loans the AUC is 0.48.
+
+### Validation on a synthetic market
+
+Observed data cannot confirm whether estimates between marks are correct, because the value is never
+observed. The repository therefore includes a generator that writes a market in the SEC's own file
+format, with the measurement structure found in the real filings and the true value of every loan
+recorded for every day. The same code runs on both.
+
+| Parameter set in the generator                 | True | Recovered |
+| ---------------------------------------------- | ---: | --------: |
+| Share of a disagreement carried a quarter      | 0.80 |      0.78 |
+| Share of an old mark carried, under stress     | 0.23 |      0.20 |
+| Pull to par, per quarter                       | 0.14 |      0.14 |
+| Public sensitivity, points per point of spread | 1.20 |      1.17 |
+
+Against the true value between marks, the typical error is 0.52 points, compared with 0.72 for the
+stale marks a holder would otherwise use, and the 90% band contains the true value 87% of the time.
+In simulation the model removes 48% of forecast error, considerably more than on real filings,
+because the simulated market has public spreads that matter and no shocks of a kind the model was
+not designed for. The exercise validates the machinery; it is not a forecast of performance on real
+data.
+
+`syndicate backtest data/synth/build` and `syndicate truth data/synth/build` reproduce these results.
+
 ## Data
 
 The SEC's [BDC data sets](https://www.sec.gov/data-research/sec-markets-data/bdc-data-sets) carry
@@ -39,17 +154,15 @@ clients to identify themselves with a contact address, so the downloader does no
 and does not present itself as a browser:
 
 ```sh
-go build -C ingest -o ../bin/ingest ./cmd/ingest
 export SEC_CONTACT="Your Name you@example.com"
-./bin/ingest fetch-sec -out data/raw/sec
-./bin/ingest fetch-fred -out data/raw/fred
-./bin/ingest build -sec data/raw/sec -fred data/raw/fred -out data/build
+bash scripts/pipeline.sh sec
 ```
 
-Alternatively, download the `*_bdc.zip` archives manually into `data/raw/sec` and run only the
-`fetch-fred` and `build` steps.
+Alternatively, download the `*_bdc.zip` archives manually into `data/raw/sec` and run the same
+command without `SEC_CONTACT`.
 
-The repository contains no data. The archives and the panel are generated locally under `data/`.
+The repository contains no data. The archives, the panel and the files the site reads (`data/` and
+`web/public/data/`) are generated locally by the pipeline.
 
 The filings require substantial cleaning, and most of the ingest code exists for that purpose.
 Published column names do not match the columns that hold the values. Four families of free-text

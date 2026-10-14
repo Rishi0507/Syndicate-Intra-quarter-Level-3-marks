@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { Desk } from "./lib/kernel";
 import type { Theme } from "./theme";
 
-export type View = "market" | "lenders" | "desk" | "evidence" | "method";
+export type View = "market" | "lenders" | "evidence" | "method" | "desk";
 
 export interface State {
   view: View;

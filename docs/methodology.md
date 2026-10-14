@@ -19,8 +19,9 @@ All prices are fractions of par unless stated otherwise. Time is measured in tra
 - [What the marks identify](#what-the-marks-identify)
 - [Calibrated bands](#calibrated-bands)
 - [Evaluation design](#evaluation-design)
-- [From uncertainty to a quote](#from-uncertainty-to-a-quote)
-- [Information and liquidity](#information-and-liquidity)
+- [Lender books](#lender-books)
+- [Exploratory: from uncertainty to a quote](#exploratory-from-uncertainty-to-a-quote)
+- [Exploratory: information and liquidity](#exploratory-information-and-liquidity)
 
 ## Overview
 
@@ -29,8 +30,8 @@ flowchart LR
     V["Latent value<br/>moves daily"] --> M["Lenders mark<br/>at quarter end"]
     M --> F["Filings arrive<br/>weeks later"]
     F --> K["Filter updates<br/>value and band"]
-    K --> Q["Band sets the<br/>adverse-selection<br/>charge"]
-    Q --> T["Two-sided<br/>quote"]
+    K --> B["Lender books<br/>repriced daily"]
+    K -.-> Q["Exploratory:<br/>quote and<br/>liquidity"]
 ```
 
 ## Value process
@@ -247,7 +248,39 @@ The evaluation is built so that every forecast uses only information available w
 - **Ablations.** Components that were tested and not adopted are reported beside the model, with
   their effect on the same forecasts.
 
-## From uncertainty to a quote
+## Lender books
+
+A lender's debt book is the set of loans in its latest filing. Two quantities are computed for it.
+
+**Calling the quarter.** In the backtest, every forecast of a lender's marks for one quarter is made
+on the day before that lender files. For each lender and quarter with 20 or more continuing loans,
+the principal-weighted average of the forecast changes is compared with the principal-weighted
+average of the reported changes:
+
+```math
+\hat\Delta_{h,q} = \frac{\sum_i p_i\,(\hat m_{i} - m_{i,q-1})}{\sum_i p_i},
+\qquad
+\Delta_{h,q} = \frac{\sum_i p_i\,(m_{i,q} - m_{i,q-1})}{\sum_i p_i}
+```
+
+The share of the squared change anticipated is $1 - \sum (\Delta - \hat\Delta)^2 / \sum \Delta^2$,
+against a forecast of no change. Across 663 lender-quarters it is 34%, and the
+direction is right for 175 of 192 books that moved half a point or more. On panels
+rebuilt as they stood at the time, the share is 37%. The share rises with the part of the
+book that other holders have already marked: 19% below 20% and 53% at 40% or more.
+
+**Movement since the last filing.** On any day, the site reprices each lender's book by the
+principal-weighted move in the estimate of its loans between the day its latest filing was published
+and that day. This is where the lender's marks would go if it followed the other holders, before its
+own standing distance from them, and it is the quantity that matters for any vehicle that issues or
+redeems shares at a net asset value set by those marks.
+
+## Exploratory: from uncertainty to a quote
+
+This section and the next are exploratory. They show how the uncertainty of an estimate would carry
+into a dealer's spread and into liquidity. The desk's parameters, such as the rate of quote requests
+and the share of informed clients, cannot be estimated from marks, and no trade data exists to test
+the results. They are illustrations under stated assumptions, not estimates.
 
 The half-spread is the sum of three charges, following the decomposition of Huang and Stoll. The
 first two are the closed-form quotes of Guéant, Lehalle and Fernandez-Tapia for a dealer answering
@@ -272,7 +305,7 @@ estimate breaks even where
 The adverse-selection charge is linear in the standard error $\hat\sigma_v$ of the mark. Halving the
 uncertainty halves that component of the spread.
 
-## Information and liquidity
+## Exploratory: information and liquidity
 
 A trade is also a measurement. Let $P$ be the variance of the market's estimate of a loan's value. It
 grows at $\sigma^2$ a day and is reduced to $Pr/(P+r)$ by every observation with noise variance $r$.

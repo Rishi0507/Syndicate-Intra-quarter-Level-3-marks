@@ -292,6 +292,86 @@ fn by_signal(records: &[Record]) -> Json {
     Json::Arr(rows)
 }
 
+pub const MIN_BOOK: usize = 20;
+
+#[derive(Clone, Debug, Default)]
+pub struct Book {
+    pub family: usize,
+    pub quarter: i32,
+    pub loans: usize,
+    pub actual: f64,
+    pub model: f64,
+    pub habits: f64,
+    pub peer_share: f64,
+}
+
+pub fn books(records: &[Record]) -> Vec<Book> {
+    let mut groups: std::collections::BTreeMap<(usize, i32), Vec<&Record>> = std::collections::BTreeMap::new();
+    for r in records {
+        groups.entry((r.family, r.ym.div_euclid(3))).or_default().push(r);
+    }
+    groups
+        .into_iter()
+        .filter_map(|((family, quarter), rs)| {
+            let w: f64 = rs.iter().map(|r| r.principal).sum();
+            if rs.len() < MIN_BOOK || w <= 0.0 {
+                return None;
+            }
+            let avg = |f: &dyn Fn(&Record) -> f64| rs.iter().map(|r| r.principal * f(r)).sum::<f64>() / w;
+            Some(Book {
+                family,
+                quarter,
+                loans: rs.len(),
+                actual: avg(&|r| r.price - r.prev),
+                model: avg(&|r| r.model().0 - r.prev),
+                habits: avg(&|r| r.public.0 - r.prev),
+                peer_share: avg(&|r| if r.seen > 0 { 1.0 } else { 0.0 }),
+            })
+        })
+        .collect()
+}
+
+fn book_score(bs: &[&Book]) -> Json {
+    let n = bs.len();
+    let sst: f64 = bs.iter().map(|b| b.actual * b.actual).sum();
+    let sse: f64 = bs.iter().map(|b| (b.actual - b.model).powi(2)).sum();
+    let ssh: f64 = bs.iter().map(|b| (b.actual - b.habits).powi(2)).sum();
+    let moved: Vec<&&Book> = bs.iter().filter(|b| b.actual.abs() >= 0.005).collect();
+    let right = moved.iter().filter(|b| b.actual * b.model > 0.0).count();
+    let mean = |f: &dyn Fn(&Book) -> f64| bs.iter().map(|b| f(b)).sum::<f64>() / n.max(1) as f64;
+    let (ma, mm) = (mean(&|b| b.actual), mean(&|b| b.model));
+    let cov: f64 = bs.iter().map(|b| (b.actual - ma) * (b.model - mm)).sum();
+    let va: f64 = bs.iter().map(|b| (b.actual - ma).powi(2)).sum();
+    let vm: f64 = bs.iter().map(|b| (b.model - mm).powi(2)).sum();
+    Json::obj()
+        .with("n", n)
+        .with("skill", Json::round(if sst > 0.0 { 1.0 - sse / sst } else { f64::NAN }, 4))
+        .with("habits_skill", Json::round(if sst > 0.0 { 1.0 - ssh / sst } else { f64::NAN }, 4))
+        .with("correlation", Json::round(if va > 0.0 && vm > 0.0 { cov / (va * vm).sqrt() } else { f64::NAN }, 4))
+        .with("mean_abs_change", Json::round(mean(&|b| b.actual.abs()) * 100.0, 4))
+        .with("mean_abs_error", Json::round(mean(&|b| (b.actual - b.model).abs()) * 100.0, 4))
+        .with("moved", moved.len())
+        .with("direction_right", right)
+}
+
+pub fn book_report(records: &[Record]) -> Json {
+    let all = books(records);
+    let refs: Vec<&Book> = all.iter().collect();
+    let bins: [(f64, f64, &str); 3] = [(0.0, 0.2, "Under 20%"), (0.2, 0.4, "20% to 40%"), (0.4, 1.01, "40% or more")];
+    let by_share = bins
+        .iter()
+        .map(|&(lo, hi, label)| {
+            let sel: Vec<&Book> = all.iter().filter(|b| b.peer_share >= lo && b.peer_share < hi).collect();
+            book_score(&sel).with("label", label)
+        })
+        .collect::<Vec<_>>();
+    let points = all
+        .iter()
+        .map(|b| Json::Arr(vec![Json::round(b.actual * 100.0, 3), Json::round(b.model * 100.0, 3), Json::round(b.peer_share, 3), Json::from(b.loans)]))
+        .collect::<Vec<_>>();
+    book_score(&refs).with("min_loans", MIN_BOOK).with("by_peer_share", by_share).with("points", points)
+}
+
 fn ablations(records: &[&Record]) -> Json {
     let model = score(records, MODEL_RUNG);
     Json::Arr(
@@ -369,6 +449,7 @@ pub fn report(records: &[Record]) -> Json {
         .with("quiet", ladder(&quiet))
         .with("ablations", ablations(&all))
         .with("by_signal", by_signal(records))
+        .with("books", book_report(records))
         .with("by_regime", by_regime)
         .with("coverage", cov)
         .with("by_quarter", by_quarter)
@@ -462,6 +543,17 @@ mod tests {
         let report = by_signal(&rs).to_string();
         assert!(report.contains("\"label\":\"Under 0.25 points\",\"n\":1"), "{report}");
         assert!(report.contains("\"label\":\"3 points or more\",\"n\":1"), "{report}");
+    }
+
+    #[test]
+    fn books_weight_loans_by_principal() {
+        let mut rs: Vec<Record> = (0..MIN_BOOK).map(|_| rec(3, 0.99, 0.99, 0.99, 0.01)).collect();
+        rs[0] = Record { price: 0.89, principal: 3.0, sector: (0.94, 0.01), peers: (0.94, 0.01), ..rec(3, 0.89, 0.99, 0.94, 0.01) };
+        let b = &books(&rs)[0];
+        let w = 3.0 + (MIN_BOOK - 1) as f64;
+        assert!((b.actual - (-0.10 * 3.0 / w)).abs() < 1e-12);
+        assert!((b.model - (-0.05 * 3.0 / w)).abs() < 1e-12);
+        assert!(books(&rs[1..]).is_empty());
     }
 
     #[test]

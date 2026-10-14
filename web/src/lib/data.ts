@@ -44,10 +44,28 @@ export interface Evaluation {
   quiet: Rung[];
   ablations: Ablation[];
   by_signal: Signal[];
+  books?: Books;
   by_regime: { regime: string; ladder: Rung[]; pit: number[] }[];
   coverage: Coverage[];
   by_quarter: { ym: number; n: number; stale: number; model: number; followers: number; followers_stale: number; followers_model: number }[];
   pit: number[];
+}
+
+export interface BookScore {
+  n: number;
+  skill: number;
+  habits_skill: number;
+  correlation: number;
+  mean_abs_change: number;
+  mean_abs_error: number;
+  moved: number;
+  direction_right: number;
+}
+
+export interface Books extends BookScore {
+  min_loans: number;
+  by_peer_share: (BookScore & { label: string })[];
+  points: [number, number, number, number][];
 }
 
 export interface Vintage {

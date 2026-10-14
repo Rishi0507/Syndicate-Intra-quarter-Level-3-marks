@@ -153,6 +153,20 @@ fn main() {
                     c.naive_width90 * 100.0
                 );
             }
+            let books = eval::books(&records);
+            if !books.is_empty() {
+                let sst: f64 = books.iter().map(|b| b.actual * b.actual).sum();
+                let sse: f64 = books.iter().map(|b| (b.actual - b.model).powi(2)).sum();
+                let moved: Vec<&eval::Book> = books.iter().filter(|b| b.actual.abs() >= 0.005).collect();
+                println!(
+                    "\n  Lender books, {} or more loans: {} books, {:.1}% of the squared change anticipated, direction right in {} of {} that moved half a point",
+                    eval::MIN_BOOK,
+                    books.len(),
+                    (1.0 - sse / sst) * 100.0,
+                    moved.iter().filter(|b| b.actual * b.model > 0.0).count(),
+                    moved.len()
+                );
+            }
             if let Some(path) = out {
                 std::fs::write(&path, eval::report(&records).to_string()).unwrap_or_else(|e| die(format!("{path}: {e}")));
                 eprintln!("wrote {path}");

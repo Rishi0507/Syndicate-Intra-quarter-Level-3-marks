@@ -17,9 +17,9 @@ const Desk = lazy(() => import("./views/Desk").then((m) => ({ default: m.Desk })
 const TABS: { id: View; label: string }[] = [
   { id: "market", label: "Market" },
   { id: "lenders", label: "Lenders" },
-  { id: "desk", label: "Desk" },
   { id: "evidence", label: "Evidence" },
   { id: "method", label: "Method" },
+  { id: "desk", label: "Desk" },
 ];
 
 const LEAVE_MS = 170;

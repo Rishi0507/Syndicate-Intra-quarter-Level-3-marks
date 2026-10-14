@@ -374,6 +374,15 @@ a {
 .pane > header {
   margin-bottom: 20px;
 }
+.pane.exploratory {
+  padding-block: 14px;
+  border-left: 3px solid var(--inferred);
+}
+.pane.exploratory p {
+  font-size: var(--fs-1);
+  color: var(--ink-2);
+  max-width: 82ch;
+}
 h2 {
   font-size: var(--fs-4);
   font-weight: 600;

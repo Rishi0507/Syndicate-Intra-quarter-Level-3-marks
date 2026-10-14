@@ -17,9 +17,9 @@ companies (BDCs) file with the SEC.
 ![Market page: a loan's daily estimate and band, the lender marks behind it, and an indicative quote](docs/market.jpg)
 
 > **Disclaimer.** Syndicate is independent research built from public filings and does not
-> constitute investment advice. Lender names appear because they are disclosed in those filings.
-> Figures shown beside them are statistical estimates and are not findings about any manager's
-> valuation process.
+> constitute investment advice. The site and its exported data identify lenders by code. Figures
+> about a lender describe how its filed marks relate to other holders' marks of the same loans; they
+> are statistical estimates and are not assessments of any manager's valuation policies or controls.
 
 ## Contents
 

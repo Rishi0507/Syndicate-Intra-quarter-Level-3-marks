@@ -163,13 +163,13 @@ from the diagram.
 
 ### Commands
 
-| Command                                   | Purpose                                                               |
-| ----------------------------------------- | --------------------------------------------------------------------- |
-| `syndicate fit <build-dir>`               | Estimates every parameter from the marks and reports the findings.    |
-| `syndicate backtest <build-dir>`          | Runs the ten-quarter walk-forward backtest.                           |
-| `syndicate truth <build-dir>`             | Scores daily estimates against the true value (synthetic data only).  |
-| `syndicate export <build-dir> <out-dir>`  | Fits, backtests, filters every loan and writes the site's files.      |
-| `syndicate rest <parameters>`             | Solves for the rest points of the liquidity model.                    |
+| Command                                  | Purpose                                                                                                                  |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `syndicate fit <build-dir>`              | Estimates every parameter from the marks and reports the findings.                                                       |
+| `syndicate backtest <build-dir>`         | Runs the ten-quarter walk-forward backtest.                                                                              |
+| `syndicate truth <build-dir>`            | Scores daily estimates against the true value (synthetic data only).                                                     |
+| `syndicate export <build-dir> <out-dir>` | Fits, backtests, filters every loan and writes the site's files. Lenders are written as codes unless `--named` is given. |
+| `syndicate rest <parameters>`            | Solves for the rest points of the liquidity model.                                                                       |
 
 ### Delayed measurements
 
@@ -231,16 +231,20 @@ flowchart TB
 ### Static file contract
 
 The export writes everything the site needs. Per-loan daily curves are not exported, because there
-are too many. The marks and the sector feeds are, and the browser recomputes any loan's curve with
-the same code the native program uses.
+are too many. The marks are, and the browser recomputes any loan's curve with the same code the
+native program uses.
 
-| File          | Format                     | Content                                                                    |
-| ------------- | -------------------------- | -------------------------------------------------------------------------- |
-| `meta.json`   | JSON                       | Source, daily grid, fitted parameters, sector batches, backtest, findings. |
-| `loans.json`  | JSON, column-oriented      | One entry per loan: name, sector, class, lenders, size, current estimate.  |
-| `marks_i.bin` | Unsigned 16-bit integers   | For each mark: lender family, reporting date, filing date.                 |
-| `marks_f.bin` | 32-bit floats              | For each mark: price, previous mark, principal, contribution to its sector feed. |
-| `path.bin`    | One-byte codes             | A compressed path of each loan's estimate and standard error.              |
+Lender families are written as codes, `Lender 01` for the family holding the most live loans and so
+on, so that the site does not publish named rankings of managers. `--named` writes the names as filed,
+for private analysis.
+
+| File          | Format                   | Content                                                                                               |
+| ------------- | ------------------------ | ----------------------------------------------------------------------------------------------------- |
+| `meta.json`   | JSON                     | Source, daily grid, fitted parameters, lender codes, backtest, audit, findings.                       |
+| `loans.json`  | JSON, column-oriented    | One entry per loan: name, sector, class, lenders, size, current estimate.                             |
+| `marks_i.bin` | Unsigned 16-bit integers | For each mark: lender family, reporting date, filing date.                                            |
+| `marks_f.bin` | 32-bit floats            | For each mark: price, previous mark, principal, and two fields reserved for the sector feed ablation. |
+| `path.bin`    | One-byte codes           | A compressed path of each loan's estimate and standard error.                                         |
 
 ## Web application
 

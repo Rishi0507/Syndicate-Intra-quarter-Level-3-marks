@@ -21,6 +21,20 @@ companies (BDCs) file with the SEC.
 > Figures shown beside them are statistical estimates and are not findings about any manager's
 > valuation process.
 
+## Contents
+
+- [Background](#background)
+- [Capabilities](#capabilities)
+- [Results](#results)
+- [Web application](#web-application)
+- [Architecture](#architecture)
+- [Data](#data)
+- [Getting started](#getting-started)
+- [Repository layout](#repository-layout)
+- [Methodology](#methodology)
+- [Limitations](#limitations)
+- [References](#references)
+
 ## Background
 
 Private credit is increasingly expected to offer investors daily pricing and, over time, a secondary
@@ -259,3 +273,58 @@ web/       TypeScript  views, charts, data loading and kernel bindings
 scripts/   Bash        pipeline.sh, test.sh, cargo.sh
 docs/                  architecture, methodology, data notes and screenshots
 ```
+
+## Methodology
+
+The site's Method page and [docs/methodology.md](docs/methodology.md) contain the full
+specification. In summary:
+
+| Element        | Approach                                                                                                                                                                                                                                                                     | Source                                    |
+| -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Value          | A loan's value moves daily with a public credit spread, a shock shared by its sector and news of its own. Sensitivity and volatility rise as the loan becomes stressed.                                                                                                       | [`filter.rs`](kernel/src/filter.rs)       |
+| Marks          | A lender's view is fair value plus a level bias and a persistent distance. A mark and the same lender's previous mark together measure the value now less a share of the value then, with only the fresh part of the disagreement as noise.                                  | [`filter.rs`](kernel/src/filter.rs)       |
+| Delayed filing | On each reporting date the filter copies the current value into a state slot. A mark filed weeks later updates the slot and, through its correlation with the present, corrects today's estimate exactly.                                                                     | [`filter.rs`](kernel/src/filter.rs)       |
+| Smoothing      | A fair value cannot be forecast from its own past. If peers' marks last quarter predict a lender's change this quarter, that lender is marking late, by the ratio of two covariances. No public market is required.                                                          | [`calib.rs`](kernel/src/calib.rs)         |
+| Other loans    | Each loan is filtered alone, then receives the surprises of the other loans in its sector, week by week as they are filed, with its own excluded.                                                                                                                             | [`engine.rs`](kernel/src/engine.rs)       |
+| Jumps          | The first mark of each quarter is tested against a jump. The belief becomes a two-part mixture, collapsed back to a single Gaussian.                                                                                                                                         | [`filter.rs`](kernel/src/filter.rs)       |
+| Estimation     | Six steps, each identified by a different slice of the marks. No model parameter is hand-set; a short list of thresholds is fixed by design, such as the price of 97 below which a loan counts as stressed.                                                                  | [`calib.rs`](kernel/src/calib.rs)         |
+| Bands          | Split-conformal calibration, walk-forward and per regime, on the model's standard deviation plus the typical error of the regime.                                                                                                                                            | [`eval.rs`](kernel/src/eval.rs)           |
+| Quote          | Guéant, Lehalle and Fernandez-Tapia for making the market and carrying inventory; Glosten and Milgrom for adverse selection, which is linear in the price's standard error.                                                                                                  | [`quote.rs`](kernel/src/quote.rs)         |
+| Liquidity      | The variance of the market's estimate grows daily and is reduced by every mark and every trade. Trades arrive faster when the spread is tighter, and the spread is tighter when the variance is lower. The process is simulated exactly and reduced to an equation whose rest points fold. | [`liquidity.rs`](kernel/src/liquidity.rs) |
+
+## Limitations
+
+- **Consensus, not a traded price.** The estimate is where lenders would mark a loan today without
+  delay. Where every lender is too generous, so is the estimate.
+- **Single-lender loans.** Before a second lender has filed, the model knows little that the last
+  mark does not. Three quarters of these loans have one lender; for them the estimate is that
+  lender's mark rolled forward, with a band that reflects it.
+- **Early disagreement.** When a loan is first reported by two or three lenders that disagree, the
+  estimate can follow the wrong one for a quarter or two before the rest outweigh it. The band is
+  wide while it does.
+- **Identification of smoothing.** Smoothing is read from serial dependence, as is standard for
+  hedge funds and private equity. A loan whose true value fell steadily for its own reasons would be
+  indistinguishable from a lender marking it down late.
+- **Entity resolution.** Borrowers are matched across lenders by name and loan terms, and pieces of
+  one borrower's debt are separated by their marks. Both rule sets prefer leaving two records apart
+  to merging them, so some shared loans are missed and some merges are incorrect. Names are read by
+  rule from free text, and some are wrong.
+- **Desk assumptions.** The desk parameters, such as how many clients request quotes and how
+  aggressively they shop, cannot be estimated from marks. They are assumptions to be varied, and
+  every quote inherits them.
+- **Independence of lenders.** The model treats lenders' valuation errors as independent given the
+  loan. Lenders that share a third-party valuation agent are less independent than that.
+- **Liquidity model.** The liquidity results describe a market that barely exists yet. One
+  prediction is testable with trade data: loans should trade most in the weeks after their lenders
+  file.
+
+## References
+
+- SEC, [Business Development Company data sets](https://www.sec.gov/data-research/sec-markets-data/bdc-data-sets)
+- Federal Reserve Bank of St. Louis, [FRED](https://fred.stlouisfed.org/)
+- O. Guéant, C.-A. Lehalle, J. Fernandez-Tapia, *Dealing with the inventory risk* (2013)
+- L. Glosten, P. Milgrom, *Bid, ask and transaction prices in a specialist market with heterogeneously informed traders* (1985)
+- R. Huang, H. Stoll, *The components of the bid-ask spread* (1997)
+- M. Getmansky, A. Lo, I. Makarov, *An econometric model of serial correlation and illiquidity in hedge fund returns* (2004)
+- M. Bruls, K. Huizing, J. van Wijk, *Squarified treemaps* (2000)
+- V. Vovk, A. Gammerman, G. Shafer, *Algorithmic learning in a random world* (2005)

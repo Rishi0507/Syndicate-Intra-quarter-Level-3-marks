@@ -8,7 +8,7 @@ type Column = "name" | "live" | "speed" | "bias" | "noise" | "overlap";
 const COLUMNS: { id: Column; label: string; numeric: boolean }[] = [
   { id: "name", label: "Lender", numeric: false },
   { id: "live", label: "Loans", numeric: true },
-  { id: "speed", label: "News marked in its own quarter", numeric: true },
+  { id: "speed", label: "Same-quarter share of news", numeric: true },
   { id: "bias", label: "Marks against peers", numeric: true },
   { id: "noise", label: "Scatter, loan by loan", numeric: true },
   { id: "overlap", label: "Shared marks", numeric: true },
@@ -69,10 +69,17 @@ export function Lenders({ u }: { u: Universe }) {
           <h2>How each lender marks</h2>
           <p className="lede">
             Lenders that hold the same loan give the model something to compare. From those comparisons it estimates three habits for
-            each manager: how fast its marks take in news, whether they sit above or below its peers', and how far they scatter around
-            them from one loan to the next. Vehicles run by one manager are treated as a single lender, because one committee values
-            the loan for all of them.
+            each manager: how much of the news on a troubled loan reaches its mark in the same quarter, where its marks sit against
+            other holders', and how far they scatter from one loan to the next. Vehicles run by one manager are treated as a single
+            lender, because one committee values the loan for all of them.
           </p>
+          {!u.meta.lenders_named && (
+            <p className="note" style={{ marginTop: 10 }}>
+              Lenders are identified by code, numbered by the loans they hold. The figures describe how each lender's marks relate to
+              other holders' marks of the same loans. They are statistical estimates from public filings, uncertain for lenders that
+              share few loans, and they are not assessments of any manager's valuation policies or controls.
+            </p>
+          )}
         </header>
         <div className="stats" style={{ marginBottom: 22 }}>
           <div className="stat inset">
@@ -86,9 +93,9 @@ export function Lenders({ u }: { u: Universe }) {
             <em>of {fmtInt(u.meta.counts.borrowers)} borrowers</em>
           </div>
           <div className="stat inset">
-            <span>Slowest well-observed lender</span>
+            <span>Lowest same-quarter share, well-observed lenders</span>
             <b>{fmtPct(slowest)}</b>
-            <em>of news on a troubled loan marked in the quarter it arrives</em>
+            <em>of news on a troubled loan marked in the quarter it arrives, at least</em>
           </div>
           <div className="stat inset">
             <span>Of a disagreement between lenders</span>
@@ -134,14 +141,14 @@ export function Lenders({ u }: { u: Universe }) {
           </table>
         </div>
         <p className="note" style={{ marginTop: 16 }}>
-          Reading the columns. News marked in its own quarter is the share of a change in a troubled loan's value that reaches the
+          Reading the columns. The same-quarter share of news is the share of a change in a troubled loan's value that reaches the
           lender's mark in the quarter it happens, with the rest arriving a quarter later. It is measured from how much of what the
-          other holders of a loan reported last quarter turns up in this lender's change this quarter. Marks against peers is the
-          typical difference, in points, between a lender's mark and other lenders' marks of the same loan on the same date, for
-          performing loans. Scatter is how far its mark of one loan typically sits from the others' once that difference is removed,
-          in points; most of it is a standing view of the loan and persists. Grey bars rest on few shared marks and are shrunk toward
-          the average lender. These are statistical estimates from public filings, not findings about any manager's valuation
-          process.
+          other holders of a loan reported last quarter turns up in this lender's change this quarter. Part of that can be a trend
+          in the loan's value rather than a late mark, so the share is a lower bound; the Evidence page measures the trend. Marks
+          against peers is the typical difference, in points, between a lender's mark and other lenders' marks of the same loan on
+          the same date, for performing loans. Scatter is how far its mark of one loan typically sits from the others' once that
+          difference is removed, in points; most of it is a standing view of the loan and persists. Grey bars rest on few shared
+          marks and are shrunk toward the average lender.
         </p>
       </section>
     </div>

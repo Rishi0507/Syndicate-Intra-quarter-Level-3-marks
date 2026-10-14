@@ -118,6 +118,7 @@ export interface Family {
 
 export interface Meta {
   source: "synthetic" | "sec" | string;
+  lenders_named?: boolean;
   counts: { loans: number; borrowers: number; marks: number; families: number; days: number; live: number; shared: number };
   days: number[];
   quarters: [number, number][];

@@ -234,10 +234,12 @@ a {
   border: 0;
   padding: 4px 6px 4px 0;
   cursor: pointer;
-  font-size: var(--fs-2);
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  font-variation-settings: "wdth" 118;
+  font-family: var(--serif);
+  font-size: 23px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-variation-settings: "opsz" 48;
+  color: var(--ink-1);
 }
 .wordmark svg {
   width: 24px;
@@ -294,24 +296,28 @@ a {
   gap: 8px;
 }
 .source {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border-radius: var(--radius-chip);
-  border: 1px solid var(--glass-line);
-  font-size: var(--fs-0);
-  color: var(--ink-2);
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: baseline;
+  column-gap: 12px;
+  row-gap: 2px;
+  margin: 0 8px 0 0;
+  padding: 1px 0 1px 16px;
+  border-left: 1px solid var(--glass-line);
   white-space: nowrap;
 }
-.source i {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--ink-3);
+.source dt {
+  color: var(--ink-3);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
 }
-.source--real i {
-  background: var(--good);
+.source dd {
+  margin: 0;
+  color: var(--ink-1);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .icon-btn {
   width: 34px;
@@ -1054,7 +1060,7 @@ blockquote cite {
     flex-basis: 100%;
     margin-left: 0;
   }
-  .source b {
+  .source .source-date {
     display: none;
   }
   .facts {

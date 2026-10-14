@@ -219,18 +219,19 @@ export function App() {
               <path d="M16 4v24M10 4h12M10 28h12" fill="none" stroke="var(--inferred)" strokeWidth="2.4" strokeLinecap="round" />
               <circle cx="16" cy="16" r="5" fill="var(--ink-1)" />
             </svg>
-            <span>{BRAND.toUpperCase()}</span>
+            <span>{BRAND}</span>
           </button>
           <Tabs view={view} />
           <div className="nav-end">
-            <span
-              className={`source${synthetic ? "" : " source--real"}`}
+            <dl
+              className="source"
               title={synthetic ? "A simulated market with a known answer. No real company, lender or mark." : "SEC BDC data sets, as filed."}
             >
-              <i />
-              {synthetic ? "Simulated market" : "SEC filings"}
-              <b style={{ fontWeight: 400, color: "var(--ink-3)" }}>to {fmtMonth(u.meta.days[u.meta.days.length - 1])}</b>
-            </span>
+              <dt>Source</dt>
+              <dd>{synthetic ? "Simulated market" : "SEC BDC filings"}</dd>
+              <dt className="source-date">Through</dt>
+              <dd className="source-date">{fmtMonth(u.meta.days[u.meta.days.length - 1])}</dd>
+            </dl>
             <button className="icon-btn theme-btn" onClick={toggleTheme} aria-label={light ? "Switch to dark mode" : "Switch to light mode"} title={light ? "Dark mode" : "Light mode"}>
               {light ? (
                 <svg viewBox="0 0 16 16" aria-hidden="true">

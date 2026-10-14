@@ -16,10 +16,10 @@ concurrency:
 jobs:
   ingest:
     name: Ingest (Go)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: ingest/go.mod
           cache: false
@@ -34,9 +34,9 @@ jobs:
 
   kernel:
     name: Kernel (Rust)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
@@ -52,15 +52,15 @@ jobs:
 
   web:
     name: Web (TypeScript)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: web
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
@@ -72,10 +72,10 @@ jobs:
   end-to-end:
     name: Synthetic market, end to end
     needs: [ingest, kernel, web]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: ingest/go.mod
           cache: false
@@ -85,9 +85,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: kernel
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci

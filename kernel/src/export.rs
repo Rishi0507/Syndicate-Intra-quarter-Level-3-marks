@@ -128,13 +128,24 @@ fn audit_json(build: &Path) -> Json {
     out.with("vintage", vintage)
 }
 
+pub fn lender_codes(live: &[usize], marks: &[usize], names: &[String]) -> Vec<String> {
+    let mut order: Vec<usize> = (0..names.len()).collect();
+    order.sort_by(|&a, &b| live[b].cmp(&live[a]).then(marks[b].cmp(&marks[a])).then(names[a].cmp(&names[b])));
+    let width = names.len().to_string().len().max(2);
+    let mut codes = vec![String::new(); names.len()];
+    for (rank, &i) in order.iter().enumerate() {
+        codes[i] = format!("Lender {:0width$}", rank + 1, width = width);
+    }
+    codes
+}
+
 pub struct Summary {
     pub loans: usize,
     pub marks: usize,
     pub bytes: usize,
 }
 
-pub fn export(build: &Path, out: &Path, factor: &str, min_train: usize, log: &mut dyn FnMut(&str)) -> Result<Summary, String> {
+pub fn export(build: &Path, out: &Path, factor: &str, min_train: usize, named: bool, log: &mut dyn FnMut(&str)) -> Result<Summary, String> {
     let panel = Panel::load(build)?;
     let level = panel.factor(factor).ok_or_else(|| format!("factors.tsv has no {factor} column"))?.to_vec();
     if panel.days.len() > u16::MAX as usize {
@@ -289,8 +300,8 @@ pub fn export(build: &Path, out: &Path, factor: &str, min_train: usize, log: &mu
         .with("path_start", path_start);
 
     let (filled, _) = calib::shocks_from(&level);
-    let families = panel
-        .families
+    let shown = if named { panel.families.clone() } else { lender_codes(&family_live, &family_marks, &panel.families) };
+    let families = shown
         .iter()
         .enumerate()
         .map(|(i, fname)| {
@@ -330,6 +341,7 @@ pub fn export(build: &Path, out: &Path, factor: &str, min_train: usize, log: &mu
 
     let meta = Json::obj()
         .with("source", panel.source.as_str())
+        .with("lenders_named", named)
         .with(
             "counts",
             Json::obj()
@@ -447,6 +459,14 @@ mod tests {
         assert_eq!(sd_code(0.0), 0);
         assert_eq!(sd_code(SD_HI_POINTS / 100.0), 255);
         assert!(sd_code(0.003) > 50);
+    }
+
+    #[test]
+    fn lender_codes_rank_by_size_and_hide_names() {
+        let names: Vec<String> = ["Gamma", "Alpha", "Beta"].iter().map(|s| s.to_string()).collect();
+        let codes = lender_codes(&[5, 9, 5], &[10, 1, 20], &names);
+        assert_eq!(codes, vec!["Lender 03", "Lender 01", "Lender 02"]);
+        assert!(codes.iter().all(|c| !names.iter().any(|n| c.contains(n.as_str()))));
     }
 
     #[test]

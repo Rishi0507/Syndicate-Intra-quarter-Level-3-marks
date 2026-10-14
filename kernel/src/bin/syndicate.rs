@@ -71,7 +71,7 @@ fn show_fit(fit: &Fit) {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        die("usage: syndicate <fit|backtest|truth> <build-dir> [--out file] [--records file] [--only yyyy-mm]\n       syndicate export <build-dir> <out-dir>\n       syndicate rest <eight market parameters>");
+        die("usage: syndicate <fit|backtest|truth> <build-dir> [--out file] [--records file] [--only yyyy-mm]\n       syndicate export <build-dir> <out-dir> [--named]\n       syndicate rest <eight market parameters>");
     }
     let out = args.iter().position(|a| a == "--out").and_then(|i| args.get(i + 1)).cloned();
 
@@ -183,7 +183,8 @@ fn main() {
         }
         "export" => {
             let Some(dest) = args.get(3) else { die("export needs an output directory") };
-            let summary = export::export(Path::new(&args[2]), Path::new(dest), FACTOR, MIN_TRAIN, &mut |msg| eprintln!("  {msg}"))
+            let named = args.iter().any(|a| a == "--named");
+            let summary = export::export(Path::new(&args[2]), Path::new(dest), FACTOR, MIN_TRAIN, named, &mut |msg| eprintln!("  {msg}"))
                 .unwrap_or_else(|e| die(e));
             eprintln!("{} loans, {} marks, {} KB in {dest}", summary.loans, summary.marks, summary.bytes / 1024);
         }

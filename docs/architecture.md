@@ -57,7 +57,7 @@ flowchart TB
 
 | Stage  | Input                                     | Output                                         | Location                   |
 | ------ | ----------------------------------------- | ---------------------------------------------- | -------------------------- |
-| Fetch  | SEC and FRED endpoints                    | `*_bdc.zip` archives, daily market series      | `data/raw/`                |
+| Fetch  | SEC, EDGAR and FRED endpoints             | `*_bdc.zip` archives, daily market series      | `data/raw/`                |
 | Ingest | Archives and market series                | Panel of marks as tab-separated tables, report | `data/build/`              |
 | Kernel | Panel                                     | Fitted model, backtest, static site files      | `web/public/data/`         |
 | Web    | Static files and the WebAssembly kernel   | Interactive site                               | `web/dist/` after a build  |
@@ -72,19 +72,21 @@ stream, without unpacking it to disk.
 
 ### Commands
 
-| Command            | Purpose                                                                    |
-| ------------------ | -------------------------------------------------------------------------- |
-| `ingest fetch-sec` | Downloads the SEC BDC data sets. Requires `SEC_CONTACT`.                   |
-| `ingest fetch-fred`| Downloads public market series from FRED.                                  |
-| `ingest build`     | Parses, cleans and resolves the archives, then writes the panel.           |
-| `ingest synth`     | Generates a synthetic market with a known answer and builds its panel.     |
-| `ingest inspect`   | Shows how one archive's identifiers are being parsed.                      |
+| Command              | Purpose                                                                          |
+| -------------------- | -------------------------------------------------------------------------------- |
+| `ingest fetch-sec`   | Downloads the SEC BDC data sets. Requires `SEC_CONTACT`.                         |
+| `ingest fetch-edgar` | Fills months the data sets do not cover from EDGAR XBRL. Requires `SEC_CONTACT`. |
+| `ingest fetch-fred`  | Downloads public market series from FRED.                                        |
+| `ingest build`       | Parses, cleans and resolves the archives, then writes the panel.                 |
+| `ingest synth`       | Generates a synthetic market with a known answer and builds its panel.           |
+| `ingest inspect`     | Shows how one archive's identifiers are being parsed.                            |
 
 ### Pipeline
 
 ```mermaid
 flowchart TB
     ZIP["SEC archive<br/>(zip)"] --> SOI
+    XB["xbrl<br/>EDGAR filing pivoted<br/>to the same rows"] --> SOI
     SOI["soi<br/>stream Schedule of<br/>Investments rows"] --> IDENT
     IDENT["ident<br/>parse identifier into<br/>borrower, class, facility"] --> TAX
     TAX["taxonomy<br/>map sector and<br/>manager family"] --> PAN
@@ -98,6 +100,7 @@ flowchart TB
 | Package    | Responsibility                                                                                                         |
 | ---------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `fetch`    | Downloads the public inputs. Declares a contact address to the SEC and never presents itself as a browser.             |
+| `xbrl`     | Pivots the XBRL instance of one periodic filing into Schedule of Investments rows, for months the data sets omit.     |
 | `soi`      | Streams the Schedule of Investments report. Columns are located by name, never by position.                            |
 | `ident`    | Parses free-text investment identifiers. Four grammar families are handled, including industry labels run into names.  |
 | `taxonomy` | Maps filer labels onto a shared set of industry sectors and manager families.                                          |

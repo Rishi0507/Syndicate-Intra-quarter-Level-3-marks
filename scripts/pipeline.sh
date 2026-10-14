@@ -19,6 +19,7 @@ case "$mode" in
     ./bin/ingest.exe fetch-fred -out data/raw/fred
     if [ -n "${SEC_CONTACT:-}" ]; then
       ./bin/ingest.exe fetch-sec -out data/raw/sec
+      ./bin/ingest.exe fetch-edgar -sec data/raw/sec -cache data/raw/edgar
     elif ! ls data/raw/sec/*_bdc.zip >/dev/null 2>&1; then
       echo "No archives in data/raw/sec and SEC_CONTACT is not set. See the top of this script." >&2
       exit 1

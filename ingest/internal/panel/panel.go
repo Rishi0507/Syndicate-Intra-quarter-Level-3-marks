@@ -128,6 +128,7 @@ type Report struct {
 	Archives        int            `json:"archives"`
 	RowsRead        int            `json:"rows_read"`
 	RowsSuperseded  int            `json:"rows_superseded"`
+	RowsDuplicate   int            `json:"rows_duplicate_filing"`
 	RowsKept        int            `json:"rows_kept"`
 	Dropped         map[string]int `json:"dropped"`
 	Pieces          map[string]int `json:"pieces"`
@@ -234,9 +235,15 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 	rep := Report{Archives: len(archives), Dropped: map[string]int{}, Pieces: map[string]int{}}
 
 	chosen := map[groupKey]filing{}
-	for _, a := range archives {
+	owner := map[string]int{}
+	for ai, a := range archives {
 		st, err := soi.ReadZip(a, func(r *soi.Row) error {
 			if r.CIK == "" || r.AsOf.IsZero() || r.Adsh == "" {
+				return nil
+			}
+			if o, seen := owner[r.Adsh]; !seen {
+				owner[r.Adsh] = ai
+			} else if o != ai {
 				return nil
 			}
 			k := groupKey{r.CIK, r.AsOf}
@@ -273,10 +280,14 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 	}
 	tainted := map[holding]bool{}
 
-	for _, a := range archives {
+	for ai, a := range archives {
 		_, err := soi.ReadZip(a, func(r *soi.Row) error {
 			if r.CIK == "" || r.AsOf.IsZero() || r.Adsh == "" {
 				drop("no holder or date")
+				return nil
+			}
+			if owner[r.Adsh] != ai {
+				rep.RowsDuplicate++
 				return nil
 			}
 			if r.AsOf < firstDate {

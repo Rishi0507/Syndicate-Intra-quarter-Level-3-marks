@@ -75,6 +75,9 @@ func summarise(p *panel.Panel) {
 	logf("")
 	logf("  rows read          %10d", r.RowsRead)
 	logf("  superseded         %10d   (comparatives and amendments)", r.RowsSuperseded)
+	if r.RowsDuplicate > 0 {
+		logf("  already read       %10d   (filings present in more than one archive)", r.RowsDuplicate)
+	}
 	logf("  positions kept     %10d", r.RowsKept)
 	reasons := make([]string, 0, len(r.Dropped))
 	for k := range r.Dropped {
@@ -93,7 +96,7 @@ func summarise(p *panel.Panel) {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: ingest <fetch-sec|fetch-fred|build|synth> [flags]")
+		fmt.Fprintln(os.Stderr, "usage: ingest <fetch-sec|fetch-edgar|fetch-fred|build|synth|inspect> [flags]")
 		os.Exit(2)
 	}
 	cmd, args := os.Args[1], os.Args[2:]
@@ -108,6 +111,24 @@ func main() {
 			fail(err)
 		}
 		logf("%d archives in %s", len(got), *out)
+
+	case "fetch-edgar":
+		dir := fs.String("sec", "data/raw/sec", "directory holding the SEC *_bdc.zip archives")
+		out := fs.String("out", "", "directory for the filled archives (default: the -sec directory)")
+		cache := fs.String("cache", "data/raw/edgar", "directory for downloaded filing documents")
+		month := fs.String("month", "", "comma-separated yyyy-mm months to read even if the data sets cover them")
+		fs.Parse(args)
+		var months []string
+		for _, m := range strings.Split(*month, ",") {
+			if m = strings.TrimSpace(m); m != "" {
+				months = append(months, m)
+			}
+		}
+		got, err := fetch.EDGAR(fetch.EdgarOptions{Dir: *dir, Out: *out, Cache: *cache, Contact: os.Getenv("SEC_CONTACT"), Months: months}, logf)
+		if err != nil {
+			fail(err)
+		}
+		logf("%d filled archives", len(got))
 
 	case "fetch-fred":
 		out := fs.String("out", "data/raw/fred", "directory for the downloaded series")

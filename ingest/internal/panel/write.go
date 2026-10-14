@@ -79,7 +79,25 @@ func (p *Panel) Write(dir string) error {
 		}); err != nil {
 		return err
 	}
-	js, err := json.MarshalIndent(p.Report, "", "  ")
+	r := p.Report
+	audit := [][2]string{
+		{"rows_read", fmt.Sprint(r.RowsRead)},
+		{"rows_superseded", fmt.Sprint(r.RowsSuperseded)},
+		{"rows_kept", fmt.Sprint(r.RowsKept)},
+		{"marks", fmt.Sprint(r.Marks)},
+		{"restated_compared", fmt.Sprint(r.Restated.Compared)},
+		{"restated_over_tenth_point", fmt.Sprint(r.Restated.Changed)},
+		{"restated_over_one_point", fmt.Sprint(r.Restated.ChangedOne)},
+		{"restated_mean_abs_points", fmt.Sprint(r.Restated.MeanAbsDiff)},
+		{"filed_until", r.Until},
+	}
+	if err := writeTSV(filepath.Join(dir, "audit.tsv"), "measure\tvalue", len(audit),
+		func(i int, w *bufio.Writer) {
+			fmt.Fprintf(w, "%s\t%s\n", audit[i][0], audit[i][1])
+		}); err != nil {
+		return err
+	}
+	js, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {
 		return err
 	}

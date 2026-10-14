@@ -78,6 +78,9 @@ func summarise(p *panel.Panel) {
 	if r.RowsDuplicate > 0 {
 		logf("  already read       %10d   (filings present in more than one archive)", r.RowsDuplicate)
 	}
+	if r.RowsAfterCutoff > 0 {
+		logf("  filed after %s %8d   (ignored)", r.Until, r.RowsAfterCutoff)
+	}
 	logf("  positions kept     %10d", r.RowsKept)
 	reasons := make([]string, 0, len(r.Dropped))
 	for k := range r.Dropped {
@@ -92,6 +95,8 @@ func summarise(p *panel.Panel) {
 	logf("  instruments        %10d   %d seen by 2+ holders, %d by 2+ families", r.Instruments, r.MultiHolder, r.MultiFamily)
 	logf("  marks              %10d   %s to %s", r.Marks, r.FirstAsOf, r.LastAsOf)
 	logf("  tranche marks      %10d", r.TrancheMarks)
+	logf("  restated later     %10d   of %d rows compared moved over 0.1 points, %d over 1 point",
+		r.Restated.Changed, r.Restated.Compared, r.Restated.ChangedOne)
 }
 
 func main() {
@@ -142,6 +147,7 @@ func main() {
 		fred := fs.String("fred", "data/raw/fred", "directory holding FRED csv files")
 		out := fs.String("out", "data/build", "output directory")
 		from := fs.Int("from", 20220601, "first date of the factor table, yyyymmdd")
+		until := fs.String("until", "", "ignore rows filed after this date, yyyy-mm-dd, to rebuild the panel as it stood then")
 		fs.Parse(args)
 
 		archives, err := archivesIn(*sec)
@@ -151,7 +157,7 @@ func main() {
 		if len(archives) == 0 {
 			fail(fmt.Errorf("no *_bdc.zip archives in %s; run fetch-sec, or download them from the SEC's BDC data sets page", *sec))
 		}
-		p, err := panel.Build(archives, logf)
+		p, err := panel.BuildUntil(archives, day.Parse(*until), logf)
 		if err != nil {
 			fail(err)
 		}

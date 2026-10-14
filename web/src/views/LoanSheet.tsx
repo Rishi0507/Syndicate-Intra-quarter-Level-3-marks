@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { PriceChart, type AltBand } from "../charts/PriceChart";
 import type { Universe } from "../lib/data";
-import { priceCss, SERIES } from "../lib/color";
+import { INFERRED, priceCss } from "../lib/color";
 import { classLabel, fmtDay, fmtPrice, fmtQuarter, fmtSigned, fmtSize, sectorLabel } from "../lib/format";
-import type { Kernel, Quote } from "../lib/kernel";
-import { bandHalfWidth, computeLoan, REGIMES, regimeOf, type Print } from "../lib/loan";
+import type { Kernel } from "../lib/kernel";
+import { bandHalfWidth, computeLoan, REGIMES, regimeOf, type LoanMark, type Print } from "../lib/loan";
 import { clamp } from "../lib/scale";
 import { setState, useStore } from "../state";
 
@@ -18,7 +18,6 @@ const SCHEDULES: { id: Schedule; label: string; gap: number }[] = [
 
 export function LoanSheet({ u, kernel, loan }: { u: Universe; kernel: Kernel; loan: number }) {
   const day = useStore((s) => s.day);
-  const desk = useStore((s) => s.desk);
   const printSd = useStore((s) => s.printSd);
   useStore((s) => s.theme);
   const [prints, setPrints] = useState<Print[]>([]);
@@ -52,26 +51,25 @@ export function LoanSheet({ u, kernel, loan }: { u: Universe; kernel: Kernel; lo
   const mean = lc.curve.mean[i] * 100;
   const sd = lc.curve.sd[i] * 100;
   const half = bandHalfWidth(u, mean, sd);
-  const dyn = u.meta.fit.dynamics;
-  const dpq = u.meta.fit.days_per_quarter;
-
-  const quote: Quote = useMemo(() => {
-    const dailyVar = kernel.dailyVar(dyn, mean / 100, dpq) * 1e4;
-    return kernel.quote(desk, mean, sd, dailyVar);
-  }, [kernel, dyn, dpq, desk, mean, sd]);
-
-  const afterPrint = Math.sqrt((sd * sd * printSd * printSd) / (sd * sd + printSd * printSd));
-  const saved = 2 * kernel.adverseWidth(desk.informed) * (sd - afterPrint);
 
   const latestYm = Math.max(-Infinity, ...lc.marks.filter((m) => m.arrival <= at).map((m) => m.ym));
   const latest = lc.marks.filter((m) => m.ym === latestYm && m.arrival <= at).sort((a, b) => a.arrival - b.arrival);
   const pending = lc.marks.filter((m) => m.ym > latestYm && m.asof <= at).length;
 
-  const parts = [
-    { label: "Making the market", value: quote.processing, color: SERIES[0] },
-    { label: "Carrying inventory", value: quote.inventoryRisk, color: SERIES[1] },
-    { label: "Being picked off", value: quote.adverseSelection, color: SERIES[2] },
-  ];
+  const holders = useMemo(() => {
+    const byFamily = new Map<number, LoanMark>();
+    for (const m of lc.marks) {
+      if (m.arrival > at) {
+        continue;
+      }
+      const have = byFamily.get(m.family);
+      if (!have || m.asof > have.asof) {
+        byFamily.set(m.family, m);
+      }
+    }
+    const newest = Math.max(-Infinity, ...[...byFamily.values()].map((m) => m.ym));
+    return [...byFamily.values()].filter((m) => m.ym >= newest - 3).sort((a, b) => b.price - a.price);
+  }, [lc, at]);
 
   const cls = u.meta.classes[u.loans.class[loan]];
   const outside = day < lc.start || day > lc.end;
@@ -165,42 +163,36 @@ export function LoanSheet({ u, kernel, loan }: { u: Universe; kernel: Kernel; lo
         </div>
 
         <div className="section">
-          <h3>A dealer's quote on {fmtDay(u.meta.days[at])}</h3>
-          <div className="ticket inset">
-            <div>
-              <span>Bid</span>
-              <b className="num">{fmtPrice(quote.bid)}</b>
-            </div>
-            <div className="mid">
-              <span>Spread</span>
-              <b className="num">{fmtPrice(2 * quote.halfSpread)}</b>
-            </div>
-            <div>
-              <span>Ask</span>
-              <b className="num">{fmtPrice(quote.ask)}</b>
-            </div>
-          </div>
-          <div className="stack" role="img" aria-label="What the spread is made of">
-            {parts.map((p) => (
-              <i key={p.label} style={{ background: p.color, flex: Math.max(p.value, 1e-6) }} title={`${p.label}: ${fmtPrice(p.value)} points a side`} />
-            ))}
-          </div>
-          <table>
-            <tbody>
-              {parts.map((p) => (
-                <tr key={p.label}>
-                  <td>
-                    <i className="dot" style={{ background: p.color }} />
-                    {p.label}
-                  </td>
-                  <td className="r">{fmtPrice(p.value)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <h3>Where each holder marks it</h3>
+          {holders.length > 0 ? (
+            <>
+              <HolderStrip marks={holders} mean={mean} half={half} />
+              <table>
+                <thead>
+                  <tr>
+                    <th>Lender</th>
+                    <th className="r">Latest mark</th>
+                    <th className="r">Against the estimate</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {holders.slice(0, 8).map((m) => (
+                    <tr key={m.family}>
+                      <td style={{ whiteSpace: "nowrap" }}>{u.meta.families[m.family].name}</td>
+                      <td className="r">{fmtPrice(m.price)}</td>
+                      <td className="r">{fmtSigned(m.price - mean)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          ) : (
+            <p className="note">No lender has filed a mark of this loan by this day.</p>
+          )}
           <p className="note" style={{ marginTop: 8 }}>
-            Points on each side. The charge for being picked off is proportional to how unsure the price is: one trade would take{" "}
-            {fmtPrice(saved)} points off the spread. The desk's own settings are assumptions.{" "}
+            {holders.length > 8 ? `The 8 highest of ${holders.length} lenders. ` : ""}Each current lender's most recent filed mark
+            against the estimate on this day; the shaded range is the 90% band. A lender's distance from the others tends to persist, and the
+            estimate allows for it. How the band would carry into a dealer's spread is explored on the{" "}
             <a
               href="#/desk"
               onClick={(e) => {
@@ -208,13 +200,42 @@ export function LoanSheet({ u, kernel, loan }: { u: Universe; kernel: Kernel; lo
                 setState({ view: "desk" });
               }}
             >
-              Change them
+              Desk page
             </a>
             .
           </p>
         </div>
       </div>
     </article>
+  );
+}
+
+function HolderStrip({ marks, mean, half }: { marks: LoanMark[]; mean: number; half: number }) {
+  const w = 320;
+  const h = 34;
+  const prices = marks.map((m) => m.price);
+  const lo = Math.min(...prices, mean - half) - 0.5;
+  const hi = Math.max(...prices, mean + half) + 0.5;
+  const x = (v: number) => 8 + ((v - lo) / (hi - lo)) * (w - 16);
+  const b0 = x(Math.max(lo, mean - half));
+  const b1 = x(Math.min(hi, mean + half));
+  return (
+    <div className="chart" style={{ marginBottom: 6 }}>
+      <svg viewBox={`0 0 ${w} ${h}`} height={h} role="img" aria-label="Lenders' latest marks against the estimate and its band">
+        <rect x={b0} y={8} width={Math.max(1, b1 - b0)} height={14} rx={4} fill={INFERRED} opacity={0.17} />
+        <line x1={8} x2={w - 8} y1={15} y2={15} stroke="var(--axis)" strokeWidth={1} />
+        {prices.map((p, i) => (
+          <circle key={i} cx={x(p)} cy={15} r={4} fill={priceCss(p)} stroke="var(--chart-surface)" strokeWidth={1.2} />
+        ))}
+        <line x1={x(mean)} x2={x(mean)} y1={4} y2={26} stroke={INFERRED} strokeWidth={2} />
+        <text x={8} y={33}>
+          {lo.toFixed(1)}
+        </text>
+        <text x={w - 8} y={33} textAnchor="end">
+          {hi.toFixed(1)}
+        </text>
+      </svg>
+    </div>
   );
 }
 

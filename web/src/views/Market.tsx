@@ -9,6 +9,30 @@ import { setState, useStore } from "../state";
 import { LoanSheet } from "./LoanSheet";
 
 const QUARTER = 63;
+const FEATURE_MIN_LENDERS = 6;
+const FEATURE_RANGE = 0.03;
+
+function agreeWithin(u: Universe, loan: number, day: number, range: number): boolean {
+  const latest = new Map<number, { asof: number; price: number }>();
+  for (let k = u.loans.mark_start[loan]; k < u.loans.mark_start[loan + 1]; k++) {
+    if (u.marksI[3 * k + 2] > day) {
+      continue;
+    }
+    const f = u.marksI[3 * k];
+    const asof = u.marksI[3 * k + 1];
+    const have = latest.get(f);
+    if (!have || asof > have.asof) {
+      latest.set(f, { asof, price: u.marksF[5 * k] });
+    }
+  }
+  const newest = Math.max(-Infinity, ...[...latest.values()].map((m) => m.asof));
+  const prices = [...latest.values()].filter((m) => m.asof >= newest - QUARTER).map((m) => m.price);
+  return prices.length >= 2 && Math.max(...prices) - Math.min(...prices) <= range;
+}
+
+function pathPrice(u: Universe, points: number): string {
+  return points <= u.meta.engine.price_lo * 100 + 0.05 ? `<${(u.meta.engine.price_lo * 100).toFixed(0)}` : fmtPrice(points, 1);
+}
 
 export function Market({ u, kernel }: { u: Universe; kernel: Kernel }) {
   const day = useStore((s) => s.day);
@@ -18,16 +42,25 @@ export function Market({ u, kernel }: { u: Universe; kernel: Kernel }) {
   const synthetic = u.meta.source === "synthetic";
 
   const featured = useMemo(() => {
-    let best = 0;
-    for (let i = 1; i < u.loans.name.length; i++) {
-      const live = day >= u.loans.start[i] && day <= u.loans.last[i];
-      const bestLive = day >= u.loans.start[best] && day <= u.loans.last[best];
-      const better = u.loans.families[i] !== u.loans.families[best] ? u.loans.families[i] > u.loans.families[best] : (u.loans.size[i] ?? 0) > (u.loans.size[best] ?? 0);
-      if (live && (!bestLive || better)) {
+    let best = -1;
+    let fallback = 0;
+    for (let i = 0; i < u.loans.name.length; i++) {
+      if (day < u.loans.start[i] || day > u.loans.last[i]) {
+        continue;
+      }
+      const bigger = (j: number) =>
+        u.loans.families[i] !== u.loans.families[j] ? u.loans.families[i] > u.loans.families[j] : (u.loans.size[i] ?? 0) > (u.loans.size[j] ?? 0);
+      if (bigger(fallback) || day < u.loans.start[fallback] || day > u.loans.last[fallback]) {
+        fallback = i;
+      }
+      if (u.loans.families[i] < FEATURE_MIN_LENDERS || (best >= 0 && !bigger(best))) {
+        continue;
+      }
+      if (agreeWithin(u, i, day, FEATURE_RANGE)) {
         best = i;
       }
     }
-    return best;
+    return best >= 0 ? best : fallback;
   }, [u, day]);
   const loan = selected ?? featured;
 
@@ -52,30 +85,36 @@ export function Market({ u, kernel }: { u: Universe; kernel: Kernel }) {
   };
 
   const followers = u.meta.eval.followers[u.meta.eval.followers.length - 1];
+  const books = u.meta.eval.books;
   const live = u.meta.counts.live;
 
   return (
     <div className="page">
       <section className="lead">
         <div className="pitch">
-          <h1>A daily price for loans that never trade.</h1>
+          <h1>Where lenders will mark each loan, before they file.</h1>
           <p>
-            Private loans are valued four times a year, and the value is published weeks later. {BRAND} estimates what each one is
-            worth on every day in between, says how sure it is, and turns that into a bid and an ask.
+            Private loans are marked four times a year, and the marks are published weeks later. {BRAND} estimates, for every day in
+            between, the mark each loan's lenders would report, from what other lenders of the same loan have already filed, and
+            says how sure it is.
           </p>
           <Search u={u} onChoose={choose} />
           <div className="facts">
-            <button onClick={() => setState({ view: "method" })}>
-              <b>{fmtInt(u.meta.counts.loans)}</b>
-              <span>loans priced, from {synthetic ? "simulated filings" : "what lenders file with the SEC"}</span>
-            </button>
-            <button onClick={() => setState({ view: "lenders" })}>
-              <b>{fmtInt(u.meta.counts.families)}</b>
-              <span>lenders, each with marking habits of its own</span>
-            </button>
             <button onClick={() => setState({ view: "evidence" })}>
               <b>{fmtPct(followers.skill)}</b>
-              <span>of forecast error removed once a second lender has reported</span>
+              <span>of squared forecast error removed once another lender has filed</span>
+            </button>
+            {books && (
+              <button onClick={() => setState({ view: "lenders" })}>
+                <b>{fmtPct(books.skill)}</b>
+                <span>of each lender's quarterly book change called the day before it files</span>
+              </button>
+            )}
+            <button onClick={() => setState({ view: "method" })}>
+              <b>{fmtInt(u.meta.counts.loans)}</b>
+              <span>
+                loans from {fmtInt(u.meta.counts.families)} lenders, {synthetic ? "in simulated filings" : "as filed with the SEC"}
+              </span>
             </button>
           </div>
           {movers.length > 0 && (
@@ -94,9 +133,11 @@ export function Market({ u, kernel }: { u: Universe; kernel: Kernel }) {
                       </span>
                       <span className="px num">
                         <i className="dot" style={{ background: priceCss(m.price) }} />
-                        {fmtPrice(m.price, 1)}
+                        {pathPrice(u, m.price)}
                         <br />
-                        <small className="chg">{m.change.toFixed(1)} points</small>
+                        <small className="chg">
+                          {m.change.toFixed(1)} points{m.price <= u.meta.engine.price_lo * 100 + 0.05 ? " or more" : ""}
+                        </small>
                       </span>
                     </button>
                   </li>

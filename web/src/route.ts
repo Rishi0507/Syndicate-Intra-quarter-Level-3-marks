@@ -1,6 +1,6 @@
 import { getState, setState, type State, type View } from "./state";
 
-const VIEWS: View[] = ["market", "lenders", "desk", "evidence", "method"];
+const VIEWS: View[] = ["market", "lenders", "evidence", "method", "desk"];
 
 function parse(hash: string, loans: number): Partial<State> | null {
   const parts = hash.replace(/^#\/?/, "").split("/");

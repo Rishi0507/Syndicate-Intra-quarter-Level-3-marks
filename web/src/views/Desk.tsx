@@ -110,6 +110,14 @@ export function Desk({ kernel }: { kernel: Kernel }) {
 
   return (
     <div className="page">
+      <section className="glass pane exploratory" aria-label="About this page">
+        <p>
+          <b>Exploratory.</b> This page illustrates how the uncertainty of an estimate would carry into a dealer's spread and into
+          liquidity. The desk's settings, such as how many clients ask for quotes and how many of them are informed, cannot be
+          estimated from marks, and there is no trade data to test the results against. Every figure here inherits those
+          assumptions.
+        </p>
+      </section>
       <section className="glass pane">
         <header>
           <h2>From an error bar to a firm quote</h2>

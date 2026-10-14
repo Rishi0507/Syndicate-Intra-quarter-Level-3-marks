@@ -15,6 +15,9 @@ All prices are fractions of par unless stated otherwise. Time is measured in tra
 - [Information from other loans](#information-from-other-loans)
 - [Jumps](#jumps)
 - [Estimation](#estimation)
+- [Calibrated bands](#calibrated-bands)
+- [From uncertainty to a quote](#from-uncertainty-to-a-quote)
+- [Information and liquidity](#information-and-liquidity)
 
 ## Overview
 
@@ -153,3 +156,85 @@ the rules that clean the filings.
 |    4 | Persistence of disagreement            | A gap has a standing part and a transitory part. Its autocorrelations at one and two quarters are diluted equally by the transitory part, so their ratio gives the rate at which the standing part fades.          |
 |    5 | Sector and loan volatility             | What public markets leave unexplained is split into a part shared by a sector within a quarter and a remainder, whose variance is fitted as a function of stress.                                                 |
 |    6 | Jumps                                  | Frequency and size are estimated from the tail of the same residuals.                                                                                                                                                |
+
+## Calibrated bands
+
+The model's standard deviation ranks forecasts by confidence, but credit has a floor of risk the
+model does not see: the loan no one expected to move is the one that defaults. Errors are therefore
+measured against the model's standard deviation plus the typical error of the regime, $f$,
+separately for performing, watch-list and stressed loans. With scores
+
+```math
+e_i = \frac{|m_i - \hat m_i|}{\hat\sigma_i + f}
+```
+
+from $n$ earlier forecasts, the band at level $1-\alpha$ is
+
+```math
+\hat m \pm (\hat\sigma + f)\cdot e_{(k)},
+\qquad k = \big\lceil (n+1)(1-\alpha) \big\rceil
+```
+
+This holds its stated coverage for any distribution of errors, provided they are exchangeable.
+Across quarters they are not quite exchangeable: when marks move more than in any earlier quarter,
+the band is too narrow for that quarter, and the Evidence page reports by how much. The same floors
+and multipliers apply to the band around the value itself.
+
+## From uncertainty to a quote
+
+The half-spread is the sum of three charges, following the decomposition of Huang and Stoll. The
+first two are the closed-form quotes of Guéant, Lehalle and Fernandez-Tapia for a dealer answering
+requests that arrive at rate $A e^{-k\delta}$, with risk aversion $\gamma$ and daily variance
+$\sigma^2$:
+
+```math
+\delta =
+\underbrace{\frac{1}{\gamma}\ln\Big(1+\frac{\gamma}{k}\Big)}_{\text{making the market}}
++ \underbrace{\frac12\sqrt{\frac{\sigma^2\gamma}{2kA}\Big(1+\frac{\gamma}{k}\Big)^{1+k/\gamma}}}_{\text{carrying inventory}}
++ \underbrace{d(\pi)\,\hat\sigma_v}_{\text{adverse selection}}
+```
+
+The third charge follows Glosten and Milgrom. If a share $\pi$ of clients know the loan's value and
+trade only when the quote is wrong in their favour, a dealer quoting $d$ standard errors from its
+estimate breaks even where
+
+```math
+\frac{1-\pi}{2}\,d = \pi\,\big(\phi(d) - d\,\Phi(-d)\big)
+```
+
+The adverse-selection charge is linear in the standard error $\hat\sigma_v$ of the mark. Halving the
+uncertainty halves that component of the spread.
+
+## Information and liquidity
+
+A trade is also a measurement. Let $P$ be the variance of the market's estimate of a loan's value. It
+grows at $\sigma^2$ a day and is reduced to $Pr/(P+r)$ by every observation with noise variance $r$.
+Marks arrive on a schedule. Trades arrive at a rate that depends on the spread, which in turn depends
+on $P$.
+
+```mermaid
+flowchart LR
+    T["Trade<br/>prints"] --> I["Estimate<br/>error falls"]
+    I --> S["Adverse-selection<br/>charge falls"]
+    S --> Q["Quote<br/>tightens"]
+    Q --> C["More clients<br/>trade"]
+    C --> T
+```
+
+The process is piecewise-deterministic and is simulated exactly. Averaging over arrivals gives its
+skeleton:
+
+```math
+\frac{dP}{dt} = \sigma^2 - \frac{1}{T_m}\frac{P^2}{P+r_m} - 2A\,e^{-k\,\delta(P)}\,\frac{P^2}{P+r_t}
+```
+
+The last term is hump-shaped in $P$: with little uncertainty there is little left to learn, and with
+much the quote is too wide to trade on. Where the hump clears $\sigma^2$ there are three rest points,
+two of them stable: a lit state, tight and traded, and a dark state, sustained by marks alone.
+Setting the right-hand side to zero and solving for $A$ gives the surface on the Desk page as an
+explicit graph over $P$, and a rest point is stable exactly where $dA/dP < 0$.
+
+The skeleton shows where two regimes exist but not how a loan moves between them. A single print on
+a dark loan is often enough, on its own, to relight it. The process is metastable: it remains in
+each regime for a time and jumps between them. Time spent in each regime, and what changes it, are
+estimated by simulation.

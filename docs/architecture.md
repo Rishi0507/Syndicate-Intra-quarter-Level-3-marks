@@ -72,14 +72,14 @@ stream, without unpacking it to disk.
 
 ### Commands
 
-| Command              | Purpose                                                                          |
-| -------------------- | -------------------------------------------------------------------------------- |
-| `ingest fetch-sec`   | Downloads the SEC BDC data sets. Requires `SEC_CONTACT`.                         |
-| `ingest fetch-edgar` | Fills months the data sets do not cover from EDGAR XBRL. Requires `SEC_CONTACT`. |
-| `ingest fetch-fred`  | Downloads public market series from FRED.                                        |
-| `ingest build`       | Parses, cleans and resolves the archives, then writes the panel.                 |
-| `ingest synth`       | Generates a synthetic market with a known answer and builds its panel.           |
-| `ingest inspect`     | Shows how one archive's identifiers are being parsed.                            |
+| Command              | Purpose                                                                                                    |
+| -------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `ingest fetch-sec`   | Downloads the SEC BDC data sets. Requires `SEC_CONTACT`.                                                   |
+| `ingest fetch-edgar` | Fills months the data sets do not cover from EDGAR XBRL. Requires `SEC_CONTACT`.                           |
+| `ingest fetch-fred`  | Downloads public market series from FRED.                                                                  |
+| `ingest build`       | Parses, cleans and resolves the archives, then writes the panel. `-until` ignores rows filed after a date. |
+| `ingest synth`       | Generates a synthetic market with a known answer and builds its panel.                                     |
+| `ingest inspect`     | Shows how one archive's identifiers are being parsed.                                                      |
 
 ### Pipeline
 
@@ -166,7 +166,7 @@ from the diagram.
 | Command                                  | Purpose                                                                                                                  |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | `syndicate fit <build-dir>`              | Estimates every parameter from the marks and reports the findings.                                                       |
-| `syndicate backtest <build-dir>`         | Runs the ten-quarter walk-forward backtest.                                                                              |
+| `syndicate backtest <build-dir>`         | Runs the walk-forward backtest. `--only yyyy-mm` limits it to one quarter, `--records` writes every forecast.            |
 | `syndicate truth <build-dir>`            | Scores daily estimates against the true value (synthetic data only).                                                     |
 | `syndicate export <build-dir> <out-dir>` | Fits, backtests, filters every loan and writes the site's files. Lenders are written as codes unless `--named` is given. |
 | `syndicate rest <parameters>`            | Solves for the rest points of the liquidity model.                                                                       |
@@ -200,10 +200,12 @@ A mark and the same lender's previous mark together measure the value now less a
 then, with only the fresh part of the disagreement as noise. Both values are in the state, so the
 update is an ordinary linear measurement and no additional state per lender is required.
 
-### Two-sweep engine
+### Sector feed (ablation)
 
-Loans are filtered independently, which keeps thousands of them tractable. A sector that reprices
-affects every loan in it, and the engine restores that link with a second sweep.
+Loans are filtered independently, which keeps thousands of them tractable. The engine can restore a
+link between loans in the same sector with a second sweep. The backtest scores this as an ablation:
+it changes the forecast error on the filings by 0.01%, so the model the site uses filters each loan
+once and the second sweep is not run.
 
 ```mermaid
 flowchart LR
@@ -226,6 +228,23 @@ flowchart TB
     FC --> SC["Score against<br/>the reported mark"]
     SC --> CAL["Calibrate bands on<br/>earlier scores,<br/>per regime"]
     CAL --> Q
+```
+
+### Point-in-time audit
+
+Borrower matching, the splitting of loans into pieces and some cleaning rules use every filing in the
+panel. The audit rebuilds the panel for each test quarter from rows filed by then and repeats the
+backtest for that quarter alone. The export reads the results, and those of the restatement check
+made during ingest, into the site's audit section.
+
+```mermaid
+flowchart LR
+    Q["Test quarter"] --> B["ingest build<br/>-until filing<br/>season end"]
+    B --> T["syndicate backtest<br/>--only the quarter"]
+    T --> R["records.tsv<br/>per quarter"]
+    R --> E["export writes<br/>the audit"]
+    I["ingest build:<br/>restatements"] --> A["audit.tsv"]
+    A --> E
 ```
 
 ### Static file contract
@@ -281,7 +300,8 @@ no generated glue code and no serialisation layer.
 ## Build and verification
 
 `scripts/pipeline.sh` builds every component from source and produces the site's data.
-`scripts/test.sh` runs every test in the repository.
+`scripts/test.sh` runs every test in the repository, and `scripts/vintage.sh` runs the
+point-in-time audit. All three run on Linux, macOS and Windows.
 
 ```mermaid
 flowchart TB
@@ -304,16 +324,33 @@ flowchart TB
 The consistency check loads the same static files the site loads, runs the site's own code against
 the WebAssembly module, and compares the result with daily paths the native program writes at full
 precision. Marks reach the browser in single precision, so agreement is to about seven significant
-figures. On the real panel, 12 loans and 12,187 loan-days agree within 2.5e-7 of par against a
+figures. On the real panel, 12 loans and 12,299 loan-days agree within 2.8e-7 of par against a
 tolerance of 2e-6.
+
+### Continuous integration
+
+`.github/workflows/ci.yml` runs on every pull request and on pushes to `main`. Three jobs check the
+components independently, and a fourth runs the whole system on the synthetic market, which needs no
+download because it is written in the SEC's own file format.
+
+| Job                          | Steps                                                                                         |
+| ---------------------------- | --------------------------------------------------------------------------------------------- |
+| Ingest (Go)                  | `gofmt`, `go vet`, `go test`                                                                  |
+| Kernel (Rust)                | `cargo test --lib`, WebAssembly release build                                                 |
+| Web (TypeScript)             | `npm ci`, type check, production build                                                        |
+| Synthetic market, end to end | `scripts/pipeline.sh synthetic`, browser against native, `syndicate truth` on the known answer |
 
 ## Design decisions
 
-| Decision                                   | Rationale                                                                                                                       |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
-| Files between stages, no database          | Each stage can be rerun and inspected on its own, and the site can be hosted from any static file server.                       |
-| Go for ingest                              | The work is mostly I/O and string handling over about two million rows. The standard library covers it and builds in seconds.  |
-| Rust for the kernel, without dependencies  | One source compiles to native code for estimation and to a small WebAssembly module for the browser.                            |
-| Computation in the browser                 | Curves are recomputed from marks on demand, so the site ships marks rather than millions of daily points.                       |
-| A synthetic market in the real file format | The full pipeline can be tested without network access, and estimates can be scored against a known truth.                      |
-| Conservative entity resolution             | A false merge creates disagreement that does not exist. Missing a match costs less than inventing one.                          |
+| Decision                                   | Rationale                                                                                                                                                                                                                           |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Files between stages, no database          | Each stage can be rerun and inspected on its own, and the site can be hosted from any static file server.                                                                                                                           |
+| Go for ingest                              | The work is mostly I/O and string handling over about two million rows. The standard library covers it and builds in seconds.                                                                                                       |
+| Rust for the kernel, without dependencies  | One source compiles to native code for estimation and to a small WebAssembly module for the browser.                                                                                                                                |
+| Computation in the browser                 | Curves are recomputed from marks on demand, so the site ships marks rather than millions of daily points.                                                                                                                           |
+| A synthetic market in the real file format | The full pipeline can be tested without network access, and estimates can be scored against a known truth.                                                                                                                          |
+| Conservative entity resolution             | A false merge creates disagreement that does not exist. Missing a match costs less than inventing one.                                                                                                                              |
+| Three languages, joined by files           | Each language fits its stage: Go for streaming I/O, Rust for numerics that must run natively and in the browser, TypeScript for the interface. The boundaries are file formats, so each component can be rebuilt or replaced alone. |
+| Lender codes by default                    | The site describes statistical relationships between lenders' marks. Publishing them under codes avoids presenting named rankings of managers.                                                                                      |
+| An exploratory layer kept apart            | The quote and liquidity models depend on parameters marks cannot identify. They are confined to one page that says so.                                                                                                              |
+| Fill missing data months from source       | When the SEC's monthly data set lags, the same rows are rebuilt from the filings' XBRL, checked against a month the SEC did publish.                                                                                                |

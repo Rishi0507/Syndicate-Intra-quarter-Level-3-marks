@@ -7,6 +7,10 @@ system is built and verified.
 
 - [System overview](#system-overview)
 - [Ingest](#ingest)
+- [Kernel](#kernel)
+- [Web application](#web-application)
+- [Build and verification](#build-and-verification)
+- [Design decisions](#design-decisions)
 
 ## System overview
 
@@ -126,3 +130,183 @@ Rule 2 trusts a match of several words outright. A match on a single word, which
 unrelated companies, also requires the loans' maturity month and margin to agree. On the real panel,
 25,639 distinct spellings resolve to 14,931 borrowers, and the rule that made each merge is recorded
 in the ingest report.
+
+## Kernel
+
+The kernel is a Rust crate with no external dependencies. One source builds two targets: a native
+library and command-line program used for calibration and backtesting, and a WebAssembly module
+that the browser calls directly.
+
+### Modules
+
+```mermaid
+flowchart TB
+    DATA["data.rs<br/>load panel"] --> CAL["calib.rs<br/>estimation"]
+    DATA --> INS["insight.rs<br/>raw findings"]
+    CAL --> ENG["engine.rs<br/>two sweeps"]
+    FIL["filter.rs<br/>state space"] --> ENG
+    ENG --> EVAL["eval.rs<br/>accuracy, bands"]
+    ENG --> TRUTH["truth.rs<br/>synthetic truth"]
+    ENG --> EXP["export.rs<br/>static files"]
+    FIL --> WAS["wasm.rs<br/>browser interface"]
+    QUO["quote.rs<br/>two-sided quote"] --> LIQ["liquidity.rs<br/>information loop"]
+    QUO --> WAS
+    LIQ --> WAS
+```
+
+`stats.rs` (normal distribution, robust summaries, small dense linear algebra and a deterministic
+random number generator) and `json.rs` (a minimal JSON writer) support every module and are omitted
+from the diagram.
+
+### Commands
+
+| Command                                   | Purpose                                                               |
+| ----------------------------------------- | --------------------------------------------------------------------- |
+| `syndicate fit <build-dir>`               | Estimates every parameter from the marks and reports the findings.    |
+| `syndicate backtest <build-dir>`          | Runs the ten-quarter walk-forward backtest.                           |
+| `syndicate truth <build-dir>`             | Scores daily estimates against the true value (synthetic data only).  |
+| `syndicate export <build-dir> <out-dir>`  | Fits, backtests, filters every loan and writes the site's files.      |
+| `syndicate rest <parameters>`             | Solves for the rest points of the liquidity model.                    |
+
+### Delayed measurements
+
+A lender's mark describes the quarter-end date but becomes public weeks later. The filter treats
+this exactly by keeping the past in its state.
+
+```mermaid
+sequenceDiagram
+    participant V as Loan value
+    participant F as Filter
+    participant L as Lender
+    participant S as SEC filing
+
+    Note over V,F: Quarter end
+    F->>F: Copy current value<br/>into a state slot
+    loop Daily until filing
+        V->>F: Public spread move
+        F->>F: Roll value forward,<br/>band widens
+    end
+    L->>S: Mark of the<br/>quarter-end value
+    S->>F: Filing becomes public
+    F->>F: Update the slot
+    F->>F: Correct today's value<br/>through correlation
+    Note over F: Band tightens<br/>on the filing date
+```
+
+A mark and the same lender's previous mark together measure the value now less a share of the value
+then, with only the fresh part of the disagreement as noise. Both values are in the state, so the
+update is an ordinary linear measurement and no additional state per lender is required.
+
+### Two-sweep engine
+
+Loans are filtered independently, which keeps thousands of them tractable. A sector that reprices
+affects every loan in it, and the engine restores that link with a second sweep.
+
+```mermaid
+flowchart LR
+    A["Sweep 1<br/>filter each<br/>loan alone"] --> B["Record each<br/>first mark's<br/>surprise"]
+    B --> C["Group by sector<br/>and filing week"]
+    C --> D["Precision-weighted<br/>mean, own loan<br/>excluded"]
+    D --> E["Sweep 2<br/>filter again with<br/>sector feed"]
+    E --> F["Daily estimates<br/>and bands"]
+```
+
+### Walk-forward backtest
+
+Every reported accuracy figure is out of sample. The model never sees a mark that was filed after
+the date of the forecast being scored.
+
+```mermaid
+flowchart TB
+    Q["Next quarter<br/>2024 Q1 to 2026 Q2"] --> FIT["Fit on marks<br/>filed before<br/>quarter end"]
+    FIT --> FC["Forecast each mark<br/>on the day before<br/>its filing"]
+    FC --> SC["Score against<br/>the reported mark"]
+    SC --> CAL["Calibrate bands on<br/>earlier scores,<br/>per regime"]
+    CAL --> Q
+```
+
+### Static file contract
+
+The export writes everything the site needs. Per-loan daily curves are not exported, because there
+are too many. The marks and the sector feeds are, and the browser recomputes any loan's curve with
+the same code the native program uses.
+
+| File          | Format                     | Content                                                                    |
+| ------------- | -------------------------- | -------------------------------------------------------------------------- |
+| `meta.json`   | JSON                       | Source, daily grid, fitted parameters, sector batches, backtest, findings. |
+| `loans.json`  | JSON, column-oriented      | One entry per loan: name, sector, class, lenders, size, current estimate.  |
+| `marks_i.bin` | Unsigned 16-bit integers   | For each mark: lender family, reporting date, filing date.                 |
+| `marks_f.bin` | 32-bit floats              | For each mark: price, previous mark, principal, contribution to its sector feed. |
+| `path.bin`    | One-byte codes             | A compressed path of each loan's estimate and standard error.              |
+
+## Web application
+
+The site is written in TypeScript with React. three.js is used only for the liquidity surface on the
+Desk page. The Method and Desk pages are loaded on demand, so the mathematics library and the 3D
+library are fetched only when those pages are opened.
+
+```mermaid
+flowchart LR
+    MAIN["main.tsx"] --> APP["App.tsx"]
+    APP --> STATE["state.ts, route.ts<br/>store and address"]
+    APP --> DATA["data.ts<br/>load static files"]
+    APP --> VIEWS["Market, Lenders,<br/>Evidence"]
+    APP -.-> LAZY["Desk, Method<br/>loaded on demand"]
+    VIEWS --> LOAN["loan.ts<br/>assemble a loan"]
+    LOAN --> KERN["kernel.ts<br/>WebAssembly"]
+    LAZY --> KERN
+```
+
+The kernel interface is a set of plain C functions over the module's linear memory. The page
+allocates a buffer, writes 64-bit floats into it, calls a function and reads floats back. There is
+no generated glue code and no serialisation layer.
+
+| Function                   | Purpose                                                       |
+| -------------------------- | ------------------------------------------------------------- |
+| `px_alloc`, `px_free`      | Allocate and release buffers in the module's memory.          |
+| `px_curve`                 | Daily estimate and standard error for one loan.               |
+| `px_daily_var`             | Daily variance of a loan's value at a given price.            |
+| `px_quote`                 | Bid, ask and the three components of the spread.              |
+| `px_adverse_width`         | Adverse-selection width for a given share of informed clients.|
+| `px_rest`, `px_manifold`   | Rest points and surface of the liquidity model.               |
+| `px_simulate`, `px_census` | Exact simulation of the liquidity process.                    |
+
+## Build and verification
+
+`scripts/pipeline.sh` builds every component from source and produces the site's data.
+`scripts/test.sh` runs every test in the repository.
+
+```mermaid
+flowchart TB
+    subgraph PIPE["scripts/pipeline.sh"]
+        direction TB
+        P1["Build ingest"] --> P2["Generate or fetch<br/>and build panel"]
+        P2 --> P3["Build kernel,<br/>native and wasm"]
+        P3 --> P4["Fit, backtest<br/>and export"]
+        P4 --> P5["Check browser<br/>against native"]
+    end
+
+    subgraph TEST["scripts/test.sh"]
+        direction TB
+        T1["go vet and<br/>go test"] --> T2["cargo test"]
+        T2 --> T3["TypeScript<br/>type check"]
+        T3 --> T4["Check browser<br/>against native"]
+    end
+```
+
+The consistency check loads the same static files the site loads, runs the site's own code against
+the WebAssembly module, and compares the result with daily paths the native program writes at full
+precision. Marks reach the browser in single precision, so agreement is to about seven significant
+figures. On the real panel, 12 loans and 12,187 loan-days agree within 2.5e-7 of par against a
+tolerance of 2e-6.
+
+## Design decisions
+
+| Decision                                   | Rationale                                                                                                                       |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Files between stages, no database          | Each stage can be rerun and inspected on its own, and the site can be hosted from any static file server.                       |
+| Go for ingest                              | The work is mostly I/O and string handling over about two million rows. The standard library covers it and builds in seconds.  |
+| Rust for the kernel, without dependencies  | One source compiles to native code for estimation and to a small WebAssembly module for the browser.                            |
+| Computation in the browser                 | Curves are recomputed from marks on demand, so the site ships marks rather than millions of daily points.                       |
+| A synthetic market in the real file format | The full pipeline can be tested without network access, and estimates can be scored against a known truth.                      |
+| Conservative entity resolution             | A false merge creates disagreement that does not exist. Missing a match costs less than inventing one.                          |

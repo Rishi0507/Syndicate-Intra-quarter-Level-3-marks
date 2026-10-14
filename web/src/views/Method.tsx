@@ -44,8 +44,9 @@ export function Method({ u }: { u: Universe }) {
         <div className="prose">
           <h3>A value that moves every day</h3>
           <p>
-            A loan's fair value <Tex>{T`v_t`}</Tex>, as a fraction of par, is never observed. It moves each trading day with public
-            credit markets, with a shock shared by its sector, and with news of its own:
+            A loan's latent value <Tex>{T`v_t`}</Tex>, as a fraction of par, is the mark a lender with no habits of its own would
+            report: the holders' consensus without delay, not an independent fair value. It is never observed. It moves each
+            trading day with public credit markets, with a shock shared by its sector, and with news of its own:
           </p>
           <Tex block>{T`v_t = v_{t-1} + \mu(v_{t-1}) + \beta(v_{t-1})\,x_t + s_t + u_t, \qquad s_t \sim \mathcal N(0,\sigma_s^2),\quad u_t \sim \mathcal N\!\big(0,\sigma_u(v_{t-1})^2\big)`}</Tex>
           <p>
@@ -59,9 +60,9 @@ export function Method({ u }: { u: Universe }) {
           <h3>A measurement that arrives late, from a lender with habits</h3>
           <p>
             Lender <Tex>{T`h`}</Tex> marks the loan on a reporting date <Tex>{T`a`}</Tex>, but the mark becomes public only when
-            the filing lands, weeks later. And a mark is not fair value plus noise. Two lenders a point apart on a loan this
-            quarter are mostly still a point apart the next: a lender's distance from fair value is a habit. Its view of the loan
-            is
+            the filing lands, weeks later. And a mark is not that value plus noise. Two lenders a point apart on a loan this
+            quarter are mostly still a point apart the next: a lender's distance from the consensus is a habit. Its view of the
+            loan is
           </p>
           <Tex block>{T`\tilde m_{h,q} = v_{a_q} + b_h + d_{h,q}, \qquad d_{h,q} = \alpha\, d_{h,q-1} + \varepsilon_{h,q}, \quad \varepsilon_{h,q} \sim \mathcal N\!\big(0,\; (1-\alpha^2)\, r_h^2\, g(v)^2\big)`}</Tex>
           <p>
@@ -93,13 +94,15 @@ export function Method({ u }: { u: Universe }) {
             This is why the band in every chart keeps widening past the end of a quarter and tightens only on the filing date.
           </p>
 
-          <h3>What other loans say</h3>
+          <h3>What other loans say: tested, not adopted</h3>
           <p>
             The second slot component, <Tex>{T`c_a`}</Tex>, freezes the sector's cumulative shock over the quarter. Every loan is
-            filtered alone, which is what makes thousands of them tractable, and then the link between them is restored. Each
-            loan's first mark of a quarter surprises the public forecast by <Tex>{T`\nu_j = s + (\text{its own news and noise})`}</Tex>.
-            The precision-weighted mean of the other loans' surprises, week by week as they are filed, is fed to each loan as an
-            observation of <Tex>{T`c_a`}</Tex>, with its own surprise taken out so it never hears itself.
+            filtered alone, which is what makes thousands of them tractable. A further step can restore the link between them:
+            each loan's first mark of a quarter surprises the public forecast by{" "}
+            <Tex>{T`\nu_j = s + (\text{its own news and noise})`}</Tex>, and the precision-weighted mean of the other loans'
+            surprises, week by week as they are filed, can be fed to each loan as an observation of <Tex>{T`c_a`}</Tex>. In
+            simulation, where sectors share shocks by design, this helps. On the filings it changes the forecast error by less than
+            a hundredth of a percent, so the model leaves it out and the Evidence page reports it as an ablation.
           </p>
 
           <h3>Jumps</h3>
@@ -136,12 +139,22 @@ export function Method({ u }: { u: Universe }) {
               {fmtPct(fit.r2_public, 1)} of the variation in marks.
             </li>
             <li>
-              <b>Who is slow.</b> A fair value cannot be forecast from its own past. So if what the other lenders reported last
-              quarter predicts a lender's change this quarter, that lender is marking late, by the ratio of two covariances:
-              its change now against theirs then, over its change then against theirs then. No public market is needed. Pooled
-              over {fmtInt(fit.n_lead_lag)} shared moves the share of an old mark carried into the next is{" "}
-              {fit.phi_bar.toFixed(2)}: {fit.phi_stressed.toFixed(2)} where the lender already had the loan below 97, and{" "}
-              {fit.phi_entering.toFixed(2)} where only the others did.
+              <b>Who is slow.</b> If what the other lenders reported last quarter predicts a lender's change this quarter, the
+              lender is read as marking late, by the ratio of two covariances: its change now against theirs then, over its change
+              then against theirs then. No public market is needed. Pooled over {fmtInt(fit.n_lead_lag)} shared moves the share of
+              an old mark carried into the next is {fit.phi_bar.toFixed(2)}: {fit.phi_stressed.toFixed(2)} where the lender
+              already had the loan below 97, and {fit.phi_entering.toFixed(2)} where only the others did. The reading rests on an
+              assumption the marks cannot fully test: that a loan's value has no trend of its own from one quarter to the next.
+              A loan that kept deteriorating would look the same as a lender marking it down late.
+              {u.meta.insight.catch_up && Number.isFinite(u.meta.insight.catch_up.follow) && (
+                <>
+                  {" "}
+                  The filings allow a partial check. After the other holders move a loan by a point or more and a lender does not,{" "}
+                  {fmtPct(u.meta.insight.catch_up.follow, 0)} of their move reaches that lender the next quarter, while the other
+                  holders themselves move a further {fmtPct(u.meta.insight.catch_up.continuation, 0)} the same way. Only the
+                  difference is unambiguously late marking, so these shares are upper bounds on lateness.
+                </>
+              )}
             </li>
             <li>
               <b>Bias and distance.</b> From how each lender's views sit against other lenders' on the same loan and date. A gap
@@ -154,7 +167,8 @@ export function Method({ u }: { u: Universe }) {
             </li>
             <li>
               <b>Sector and loan volatility.</b> What public markets leave unexplained splits into a part shared by a sector in a
-              quarter and a remainder, whose variance is fitted as a function of stress.
+              quarter and a remainder, whose variance is fitted as a function of stress. Both add to the uncertainty of a loan's
+              value; neither is observed directly.
             </li>
             <li>
               <b>Jumps.</b> Frequency and size come from the tail of the same residuals.
@@ -163,7 +177,7 @@ export function Method({ u }: { u: Universe }) {
           <p>
             On this panel the fit gives a public sensitivity of {(d[0] * 100).toFixed(2)} points per point of spread for a loan at
             par, loan-specific volatility of {(d[2] * q * 100).toFixed(2)} points a quarter, sector volatility of{" "}
-            {fit.sector_q_sd.toFixed(2)}, a typical distance between one lender and fair value of {fit.noise_median.toFixed(2)}{" "}
+            {fit.sector_q_sd.toFixed(2)}, a typical distance between one lender and the consensus of {fit.noise_median.toFixed(2)}{" "}
             points, and a jump in{" "}
             {fmtPct(d[12], 1)} of loan-quarters with a standard deviation of {(d[13] * 100).toFixed(0)} points. It used{" "}
             {fmtInt(fit.n_changes)} consecutive-quarter changes across {fit.n_quarters} quarters.

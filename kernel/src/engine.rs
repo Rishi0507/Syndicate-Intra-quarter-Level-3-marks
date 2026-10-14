@@ -10,7 +10,8 @@ pub struct Variant {
     pub sector: bool,
 }
 
-pub const FULL: Variant = Variant { habits: true, sector: true };
+pub const MODEL: Variant = Variant { habits: true, sector: false };
+pub const WITH_SECTOR: Variant = Variant { habits: true, sector: true };
 
 pub const BATCH_DAYS: usize = 5;
 pub const MIN_PEERS: usize = 8;
@@ -219,11 +220,29 @@ pub struct Record {
     pub public_raw: (f64, f64),
     pub public: (f64, f64),
     pub peers: (f64, f64),
-    pub full: (f64, f64),
+    pub sector: (f64, f64),
     pub seen: u32,
+    pub principal: f64,
+    pub filed: usize,
 }
 
-pub fn backtest(panel: &Panel, level: &[f64], min_train: usize, mut progress: impl FnMut(i32, usize, &Fit)) -> Result<Vec<Record>, String> {
+impl Record {
+    pub fn model(&self) -> (f64, f64) {
+        self.peers
+    }
+}
+
+pub fn backtest(panel: &Panel, level: &[f64], min_train: usize, progress: impl FnMut(i32, usize, &Fit)) -> Result<Vec<Record>, String> {
+    backtest_quarters(panel, level, min_train, None, progress)
+}
+
+pub fn backtest_quarters(
+    panel: &Panel,
+    level: &[f64],
+    min_train: usize,
+    only: Option<i32>,
+    mut progress: impl FnMut(i32, usize, &Fit),
+) -> Result<Vec<Record>, String> {
     let engine = Engine::new(panel, level);
     let mut have: Vec<i32> = panel.obs.iter().map(|o| o.ym).filter(|ym| matches!(ym.rem_euclid(12), 2 | 5 | 8 | 11)).collect();
     have.sort_unstable();
@@ -238,6 +257,9 @@ pub fn backtest(panel: &Panel, level: &[f64], min_train: usize, mut progress: im
     for k in min_train..have.len() {
         let test_ym = have[k];
         let prev_ym = have[k - 1];
+        if only.is_some_and(|q| q != test_ym) {
+            continue;
+        }
         let Some(&cut) = asof_of.get(&test_ym) else { continue };
 
         let fit = calib::fit(panel, level, &|o: &Obs| o.ym < test_ym && o.filed_idx < cut)?;
@@ -248,11 +270,12 @@ pub fn backtest(panel: &Panel, level: &[f64], min_train: usize, mut progress: im
         let keep = |o: &Obs| o.ym <= test_ym;
 
         let raw = engine.run(&fit, Variant { habits: false, sector: false }, &insts, &keep, end, false);
-        let solo = engine.run(&fit, Variant { habits: true, sector: false }, &insts, &keep, end, false);
-        let full = engine.run(&fit, FULL, &insts, &keep, end, false);
+        let solo = engine.run(&fit, MODEL, &insts, &keep, end, false);
+        let full = engine.run(&fit, WITH_SECTOR, &insts, &keep, end, false);
 
         let mut n = 0;
         for ((a, b), c) in raw.iter().zip(&solo).zip(&full) {
+            let kept: Vec<&Obs> = panel.obs_of(b.inst).iter().filter(|o| keep(o)).collect();
             for ((fa, fb), fc) in a.forecasts.iter().zip(&b.forecasts).zip(&c.forecasts) {
                 let m = &b.marks[fb.mark];
                 if m.ym <= prev_ym || m.ym > test_ym || fb.late || !m.prev.is_finite() {
@@ -267,8 +290,10 @@ pub fn backtest(panel: &Panel, level: &[f64], min_train: usize, mut progress: im
                     public_raw: (fa.public_mean, fa.public_sd),
                     public: (fb.public_mean, fb.public_sd),
                     peers: (fb.peer_mean, fb.peer_sd),
-                    full: (fc.peer_mean, fc.peer_sd),
+                    sector: (fc.peer_mean, fc.peer_sd),
                     seen: fb.seen,
+                    principal: kept.get(fb.mark).map_or(0.0, |o| o.principal),
+                    filed: fb.arrival,
                 });
                 n += 1;
             }

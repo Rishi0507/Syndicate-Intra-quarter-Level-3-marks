@@ -71,7 +71,7 @@ fn show_fit(fit: &Fit) {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
-        die("usage: syndicate <fit|backtest|truth> <build-dir> [--out file]\n       syndicate export <build-dir> <out-dir>\n       syndicate rest <eight market parameters>");
+        die("usage: syndicate <fit|backtest|truth> <build-dir> [--out file] [--records file] [--only yyyy-mm]\n       syndicate export <build-dir> <out-dir>\n       syndicate rest <eight market parameters>");
     }
     let out = args.iter().position(|a| a == "--out").and_then(|i| args.get(i + 1)).cloned();
 
@@ -90,6 +90,11 @@ fn main() {
                 .map(|(phi, sse)| format!("{:.1}:{:+.2}%", phi, (sse / best - 1.0) * 100.0))
                 .collect();
             println!("  smoothing profile         {}", profile.join("  "));
+            let lag = syndicate_kernel::insight::catch_up(&panel);
+            println!(
+                "  after peers move alone    {:>8.3}   of their move reaches the lender next quarter; peers add {:.3} more, from {} cases",
+                lag.follow, lag.continuation, lag.n
+            );
             println!("\n  {:<28} {:>6} {:>8} {:>8} {:>7} {:>7}", "family", "phi", "bias", "noise", "moves", "overlap");
             for (name, f) in panel.families.iter().zip(&fit.families) {
                 println!(
@@ -105,9 +110,14 @@ fn main() {
         }
         "backtest" => {
             let (panel, level) = load(&args[2]);
-            let records: Vec<Record> = engine::backtest(&panel, &level, MIN_TRAIN, |ym, n, fit| {
+            let only = args.iter().position(|a| a == "--only").and_then(|i| args.get(i + 1)).map(|q| {
+                let (y, m) = q.split_once('-').unwrap_or_else(|| die("--only takes a quarter-end month, yyyy-mm"));
+                let (y, m): (i32, i32) = (y.parse().unwrap_or_else(|_| die("bad year")), m.parse().unwrap_or_else(|_| die("bad month")));
+                y * 12 + m - 1
+            });
+            let records: Vec<Record> = engine::backtest_quarters(&panel, &level, MIN_TRAIN, only, |ym, n, fit| {
                 eprintln!(
-                    "  {}-{:02}  {:>6} forecasts   beta {:.4}  phi {:.2}/{:.2}  carry {:.2}  pull {:.2}  sector {:.3}",
+                    "  {}-{:02}  {:>6} forecasts   beta {:.4}  phi {:.2}/{:.2}  carry {:.2}  pull {:.2}  sector vol {:.3}",
                     ym / 12,
                     ym % 12 + 1,
                     n,
@@ -148,11 +158,23 @@ fn main() {
                 eprintln!("wrote {path}");
             }
             if let Some(path) = args.iter().position(|a| a == "--records").and_then(|i| args.get(i + 1)) {
-                let mut rows = String::from("inst\tfamily\tym\tprice\tprev\tpublic_raw\tpublic\tsyndicate\tfull\tsd\tseen\n");
+                let mut rows = String::from("inst\tfamily\tym\tprice\tprev\tpublic_raw\tpublic\tmodel\tsd\tsector\tseen\tprincipal\tfiled\n");
                 for r in &records {
                     rows.push_str(&format!(
-                        "{}\t{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{}\n",
-                        r.inst, r.family, r.ym, r.price, r.prev, r.public_raw.0, r.public.0, r.peers.0, r.full.0, r.full.1, r.seen
+                        "{}\t{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{}\t{:.0}\t{}\n",
+                        r.inst,
+                        r.family,
+                        r.ym,
+                        r.price,
+                        r.prev,
+                        r.public_raw.0,
+                        r.public.0,
+                        r.peers.0,
+                        r.peers.1,
+                        r.sector.0,
+                        r.seen,
+                        r.principal,
+                        r.filed
                     ));
                 }
                 std::fs::write(path, rows).unwrap_or_else(|e| die(format!("{path}: {e}")));

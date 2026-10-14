@@ -8,6 +8,11 @@ import { fmtInt, fmtPct, fmtQuarter } from "../lib/format";
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
+function versusStale(skill: number): string {
+  const pct = `${Math.abs(skill * 100).toFixed(0)}%`;
+  return skill >= 0 ? `${pct} less squared error` : `${pct} more squared error`;
+}
+
 function Ladder({ rungs }: { rungs: Rung[] }) {
   return (
     <HBars
@@ -15,7 +20,7 @@ function Ladder({ rungs }: { rungs: Rung[] }) {
         label: r.label,
         value: r.rmse,
         color: RUNGS[i],
-        tag: i === 0 ? r.rmse.toFixed(2) : `${r.rmse.toFixed(2)}  (${(r.skill * 100).toFixed(0)}% of error removed)`,
+        tag: i === 0 ? r.rmse.toFixed(2) : `${r.rmse.toFixed(2)}  (${versusStale(r.skill)})`,
         detail: (
           <>
             <b>{r.label}</b>
@@ -45,52 +50,71 @@ function leaning(pull: { toward_low: number; toward_high: number }): string {
 }
 
 function reading(rungs: Rung[]): string {
-  const [, raw, habits, peers, sector] = rungs.map((r) => r.skill);
+  const [, raw, habits, peers] = rungs.map((r) => r.skill);
   const pct = (x: number) => `${Math.abs(x * 100).toFixed(0)}%`;
   const parts: string[] = [];
   if (raw < -0.02) {
     parts.push(
-      `Taking marks at face value and rolling them with public spreads does worse than doing nothing, by ${pct(raw)}: a lender's distance from the rest is a habit, and a model that takes it for noise keeps pulling each mark toward the average.`,
+      `Taking marks at face value and rolling them with public spreads does worse than doing nothing, with ${pct(raw)} more squared error: a lender's distance from the rest is a habit, and a model that takes it for noise keeps pulling each mark toward the average.`,
     );
   } else {
-    parts.push(`Rolling the last mark forward with public spreads and the pull to par removes ${pct(raw)} of the error.`);
+    parts.push(`Rolling the last mark forward with public spreads and the pull to par removes ${pct(raw)} of the squared error.`);
   }
   if (habits - raw > 0.02) {
     parts.push(
       habits > 0.05
         ? `Modelling how each lender marks takes that to ${pct(habits)} removed.`
-        : `Modelling how each lender marks repairs that, to about level with the last mark (${(habits * 100).toFixed(0)}%).`,
+        : `Modelling how each lender marks repairs that, to about level with the last mark.`,
     );
   }
   if (peers - habits > 0.02) {
-    parts.push(`Other lenders' marks of the same loan are where the information is: with them, ${pct(peers)} of the error is gone.`);
+    parts.push(`Other lenders' marks of the same loan are where the information is: with them, ${pct(peers)} of the squared error is gone.`);
   }
-  parts.push(
-    sector - peers > 0.01
-      ? `Repricing in the rest of the sector adds a further ${((sector - peers) * 100).toFixed(1)} points.`
-      : "Repricing in the rest of the sector adds almost nothing on these forecasts.",
-  );
   return parts.join(" ");
 }
 
 export function Evidence({ u }: { u: Universe }) {
   const ev = u.meta.eval;
   const ins = u.meta.insight;
+  const audit = u.meta.audit;
   const synthetic = u.meta.source === "synthetic";
   const subsets: { id: string; label: string; rungs: Rung[] }[] = [
     { id: "all", label: "All forecasts", rungs: ev.all },
     { id: "followers", label: "Another lender had filed", rungs: ev.followers },
-    { id: "movers", label: "Marks that moved a point or more", rungs: ev.movers },
+    { id: "movers", label: "Mark moved 1 point or more", rungs: ev.movers },
+    { id: "big", label: "Mark moved 3 points or more", rungs: ev.big_movers },
+    { id: "quiet", label: "Mark moved less than 1 point", rungs: ev.quiet },
     ...ev.by_regime.map((r) => ({ id: r.regime, label: cap(r.regime), rungs: r.ladder })),
   ];
   const [subset, setSubset] = useState("all");
   const chosen = subsets.find((s) => s.id === subset)!;
-  const full = ev.all[ev.all.length - 1];
+  const model = ev.all[ev.all.length - 1];
   const followers = ev.followers[ev.followers.length - 1];
+  const signal = ev.by_signal[ev.by_signal.length - 1];
+  const bins = ev.by_signal.slice(0, -1);
   const perf = ev.coverage.find((c) => c.regime === "performing") ?? ev.coverage[0];
   const truthAll = u.meta.truth?.find((t) => t.label === "all");
   const regimes = ev.coverage.map((c) => cap(c.regime));
   const warn = ins.warning;
+  const lag = ins.catch_up;
+  const facts = audit?.ingest;
+  const vintage = audit?.vintage ?? null;
+  const last = ev.by_quarter[ev.by_quarter.length - 1];
+  const lastSkill = last ? 1 - (last.model / last.stale) ** 2 : NaN;
+  const vintageOf = (ym: number) => vintage?.find((v) => v.ym === ym);
+  const pooled = (rows: { n: number; stale: number; model: number }[]) => {
+    const se0 = rows.reduce((a, r) => a + r.n * r.stale ** 2, 0);
+    const se = rows.reduce((a, r) => a + r.n * r.model ** 2, 0);
+    return se0 > 0 ? 1 - se / se0 : NaN;
+  };
+  const both = ev.by_quarter.filter((q) => vintageOf(q.ym));
+  const fullAll = pooled(both);
+  const vintAll = pooled(both.map((q) => vintageOf(q.ym)!));
+  const fullPeers = pooled(both.map((q) => ({ n: q.followers, stale: q.followers_stale, model: q.followers_model })));
+  const vintPeers = pooled(both.map((q) => vintageOf(q.ym)!).map((v) => ({ n: v.followers, stale: v.followers_stale, model: v.followers_model })));
+  const fullSkills = ev.by_quarter.map((q) => 1 - (q.model / q.stale) ** 2);
+  const vintSkills = ev.by_quarter.map((q) => vintageOf(q.ym)?.skill ?? NaN);
+  const restated = facts && Number(facts.restated_compared) > 0 ? facts : null;
 
   return (
     <div className="page">
@@ -100,7 +124,8 @@ export function Evidence({ u }: { u: Universe }) {
           <p className="lede">
             Every figure here is out of sample. For each of {ev.quarters} quarters the model was fitted only on marks filed before
             that quarter ended, then asked to forecast each mark of it the day before the lender filed. {fmtInt(ev.n)} forecasts
-            were scored against what lenders went on to report.
+            were scored against the marks lenders first reported. The target is the mark a lender will report, not an independent
+            fair value.
           </p>
           {synthetic && (
             <p className="note" style={{ marginTop: 10, color: "var(--ink-2)" }}>
@@ -111,20 +136,33 @@ export function Evidence({ u }: { u: Universe }) {
         </header>
         <div className="stats">
           <div className="stat inset">
-            <span>Forecast error removed, against carrying the last mark forward</span>
-            <b>{fmtPct(full.skill)}</b>
-            <em>of squared error, all forecasts</em>
-          </div>
-          <div className="stat inset">
             <span>When another lender had already filed on the loan</span>
             <b>{fmtPct(followers.skill)}</b>
-            <em>{fmtInt(followers.n)} forecasts</em>
+            <em>
+              of squared error removed, {fmtInt(followers.n)} forecasts ({fmtPct(followers.n / ev.n)} of all)
+            </em>
+          </div>
+          {signal && signal.n > 0 && (
+            <div className="stat inset">
+              <span>A peer had filed and the estimate had moved a point or more</span>
+              <b>
+                {signal.stale_mae.toFixed(2)} → {signal.mae.toFixed(2)}
+              </b>
+              <em>typical error in points, last mark against {BRAND}, {fmtInt(signal.n)} forecasts</em>
+            </div>
+          )}
+          <div className="stat inset">
+            <span>All forecasts</span>
+            <b>{fmtPct(model.skill)}</b>
+            <em>
+              of squared error removed; where no peer has filed, the estimate stays close to the last mark
+            </em>
           </div>
           <div className="stat inset">
             <span>Outcomes inside the 90% band, performing loans</span>
             <b>{fmtPct(perf.conformal[2], 1)}</b>
             <em>
-              band {fmtPct(1 - perf.width90 / perf.naive_width90)} narrower than a naive one
+              naive band {fmtPct(perf.naive_cover90, 1)}; at equal coverage {fmtPct(1 - perf.matched_width90 / perf.matched_naive_width90)} narrower
             </em>
           </div>
           {truthAll && (
@@ -136,6 +174,55 @@ export function Evidence({ u }: { u: Universe }) {
           )}
         </div>
       </section>
+
+      {bins.length > 0 && (
+        <section className="glass pane">
+          <header>
+            <h2>Where the estimate earns its keep</h2>
+            <p className="lede">
+              Forecasts grouped by how far the estimate had moved from the lender's own last mark on the day the forecast was made.
+              The grouping uses only what was known in advance, so it is a fair test. Most of the time the estimate barely moves
+              and is no worse than the last mark. When it does move, the move is usually right.
+            </p>
+          </header>
+          <div className="cols">
+            <Figure title="Typical error, by how far the estimate had moved" note="Mean absolute error in points, with par at 100.">
+              <Columns
+                categories={bins.map((b) => b.label.replace(" points", "").replace(" point", "").replace("Under ", "< ").replace(" or more", "+"))}
+                series={[
+                  { label: "Last mark carried forward", color: MUTED, values: bins.map((b) => b.stale_mae) },
+                  { label: BRAND, color: INFERRED, values: bins.map((b) => b.mae) },
+                ]}
+                format={(v) => v.toFixed(2)}
+              />
+            </Figure>
+            <div style={{ overflowX: "auto" }}>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Estimate had moved</th>
+                    <th className="r">Forecasts</th>
+                    <th className="r">MAE, last mark</th>
+                    <th className="r">MAE, {BRAND}</th>
+                    <th className="r">Squared error removed</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ev.by_signal.map((b) => (
+                    <tr key={b.label}>
+                      <td>{b.label}</td>
+                      <td className="r">{fmtInt(b.n)}</td>
+                      <td className="r">{b.stale_mae.toFixed(2)}</td>
+                      <td className="r">{b.mae.toFixed(2)}</td>
+                      <td className="r">{fmtPct(b.skill)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className="glass pane">
         <header>
@@ -157,7 +244,18 @@ export function Evidence({ u }: { u: Universe }) {
         </Figure>
         <p className="note" style={{ marginTop: 12 }}>
           {reading(chosen.rungs)}
+          {(subset === "movers" || subset === "big" || subset === "quiet") &&
+            " Grouping by the move that actually happened favours whichever forecast predicted it: on marks that did not move, the last mark is right by construction. The grouping above, by what was known in advance, is the fair comparison."}
         </p>
+        {ev.ablations.length > 0 && (
+          <p className="note" style={{ marginTop: 8 }}>
+            Tested and not adopted:{" "}
+            {ev.ablations
+              .map((a) => `${a.label.charAt(0).toLowerCase()}${a.label.slice(1)} changes the error by ${(a.rmse_change * 100).toFixed(2)}%`)
+              .join("; ")}
+            . It helps in simulation, where sectors share shocks by design, and is left out of the model.
+          </p>
+        )}
         <details style={{ marginTop: 14 }}>
           <summary className="note" style={{ cursor: "pointer" }}>
             Show as a table
@@ -168,16 +266,16 @@ export function Evidence({ u }: { u: Universe }) {
                 <th>Information used</th>
                 <th className="r">MAE</th>
                 <th className="r">RMSE</th>
-                <th className="r">Error removed</th>
+                <th className="r">Squared error against the last mark</th>
               </tr>
             </thead>
             <tbody>
-              {chosen.rungs.map((r) => (
+              {chosen.rungs.map((r, i) => (
                 <tr key={r.id}>
                   <td>{r.label}</td>
                   <td className="r">{r.mae.toFixed(3)}</td>
                   <td className="r">{r.rmse.toFixed(3)}</td>
-                  <td className="r">{fmtPct(r.skill, 1)}</td>
+                  <td className="r">{i === 0 ? "" : versusStale(r.skill)}</td>
                 </tr>
               ))}
             </tbody>
@@ -219,14 +317,14 @@ export function Evidence({ u }: { u: Universe }) {
         </p>
         <div className="cols" style={{ marginTop: 26 }}>
           <Figure
-            title="Width of a 90% band"
-            note="In points. The naive band is the last mark plus or minus the historical range of quarterly moves, built to the same coverage. A narrower honest band is a tighter quote."
+            title="Width of a 90% band, at equal coverage"
+            note={`In points. The naive band is the last mark plus or minus the historical range of quarterly moves. Bands that miss their stated coverage by different amounts cannot be compared directly, so both are scaled here to hold exactly 90% of outcomes. As stated, the calibrated band held ${ev.coverage.map((c) => fmtPct(c.conformal[2], 1)).join(", ")} and the naive band ${ev.coverage.map((c) => fmtPct(c.naive_cover90, 1)).join(", ")}, for ${regimes.join(", ").toLowerCase()} loans.`}
           >
             <Columns
               categories={regimes}
               series={[
-                { label: "Last mark and history", color: MUTED, values: ev.coverage.map((c) => c.naive_width90) },
-                { label: BRAND, color: INFERRED, values: ev.coverage.map((c) => c.width90) },
+                { label: "Last mark and history", color: MUTED, values: ev.coverage.map((c) => c.matched_naive_width90) },
+                { label: BRAND, color: INFERRED, values: ev.coverage.map((c) => c.matched_width90) },
               ]}
               format={(v) => v.toFixed(1)}
             />
@@ -236,7 +334,7 @@ export function Evidence({ u }: { u: Universe }) {
               x={ev.by_quarter.map((q) => q.ym)}
               series={[
                 { label: "Last mark carried forward", color: MUTED, values: ev.by_quarter.map((q) => q.stale) },
-                { label: BRAND, color: INFERRED, values: ev.by_quarter.map((q) => q.full) },
+                { label: BRAND, color: INFERRED, values: ev.by_quarter.map((q) => q.model) },
               ]}
               xTicks={ev.by_quarter.filter((q) => q.ym % 12 === 2).map((q) => q.ym)}
               xFormat={fmtQuarter}
@@ -246,14 +344,79 @@ export function Evidence({ u }: { u: Universe }) {
         </div>
       </section>
 
+      {!synthetic && (restated || vintage) && (
+        <section className="glass pane">
+          <header>
+            <h2>Could the results see the future</h2>
+            <p className="lede">
+              A backtest can leak information from after the forecast date in three ways: through marks that were later restated,
+              through cleaning and matching rules that saw later filings, and through design choices made while looking at the
+              results. Each is checked here.
+            </p>
+          </header>
+          <div className="stats" style={{ marginBottom: 22 }}>
+            {restated && (
+              <div className="stat inset">
+                <span>Later restatements</span>
+                <b>{fmtPct(Number(restated.restated_over_tenth_point) / Number(restated.restated_compared), 1)}</b>
+                <em>
+                  of {fmtInt(Number(restated.restated_compared))} marks repeated in a later filing changed by more than 0.1 points.
+                  Forecasts are scored against the first-reported mark.
+                </em>
+              </div>
+            )}
+            {vintage && both.length > 0 && (
+              <>
+                <div className="stat inset">
+                  <span>All forecasts, panel rebuilt as it stood at the time</span>
+                  <b>
+                    {fmtPct(fullAll)} → {fmtPct(vintAll)}
+                  </b>
+                  <em>of squared error removed, full panel against the panel as it stood, {both.length} quarters</em>
+                </div>
+                <div className="stat inset">
+                  <span>Another lender had filed, panel as it stood</span>
+                  <b>
+                    {fmtPct(fullPeers)} → {fmtPct(vintPeers)}
+                  </b>
+                  <em>of squared error removed; the lower figure is the one to expect in real time</em>
+                </div>
+              </>
+            )}
+            {last && (
+              <div className="stat inset">
+                <span>{fmtQuarter(last.ym)}, added after the design was fixed</span>
+                <b>{fmtPct(lastSkill)}</b>
+                <em>of squared error removed, {fmtInt(last.n)} forecasts from reports filed in August 2026</em>
+              </div>
+            )}
+          </div>
+          {vintage && (
+            <Figure
+              title="Squared error removed, quarter by quarter"
+              note="The panel as it stood is rebuilt from every row filed by 105 days after the quarter ended, so borrower matching and the splitting of loans into pieces see nothing later. Borrowers matched later can still be linked in the full panel, which gives the model more shared loans."
+            >
+              <Columns
+                categories={ev.by_quarter.map((q) => fmtQuarter(q.ym).replace(" 20", " '"))}
+                series={[
+                  { label: "Full panel", color: MUTED, values: fullSkills.map((x) => x * 100) },
+                  { label: "Panel as it stood", color: INFERRED, values: vintSkills.map((x) => x * 100) },
+                ]}
+                format={(v) => `${v.toFixed(0)}%`}
+              />
+            </Figure>
+          )}
+        </section>
+      )}
+
       {u.meta.truth && truthAll && (
         <section className="glass pane">
           <header>
             <h2>Against the true value</h2>
             <p className="lede">
-              Forecasting marks is the only test real data allows. The simulated market allows a harder one: every loan's true
-              value is written down for every month end, including the months no lender reports. This is the estimate between
-              marks, scored against it.
+              Forecasting marks is the only test real data allows. The simulated market allows a check of the software: every
+              loan's true value is written down for every month end, including the months no lender reports. The simulation is
+              built with the model's own structure, so this verifies the code, not the model.
             </p>
           </header>
           <div className="cols">
@@ -290,8 +453,8 @@ export function Evidence({ u }: { u: Universe }) {
         <header>
           <h2>What the marks say before any model</h2>
           <p className="lede">
-            Three facts read straight off the filings, on the {fmtInt(ins.shared_cells)} occasions when more than one lender
-            reported the same loan on the same date.
+            Facts read straight off the filings, on the {fmtInt(ins.shared_cells)} occasions when more than one lender reported the
+            same loan on the same date.
           </p>
         </header>
         <div className="cols">
@@ -329,12 +492,24 @@ export function Evidence({ u }: { u: Universe }) {
               format={(v) => `${v.toFixed(1)}%`}
             />
           </Figure>
+          {lag && Number.isFinite(lag.follow) && (
+            <Figure
+              title="Late, or a trend"
+              note={`After the other holders move a loan by a point or more in a quarter and a lender does not, ${fmtPct(lag.follow)} of their move reaches that lender's mark the next quarter, and the other holders move a further ${fmtPct(lag.continuation)} the same way (${fmtInt(lag.n)} cases). Only the difference is unambiguously a late lender; the rest is indistinguishable from a trend in value. Lateness figures on the Lenders page are therefore upper bounds.`}
+            >
+              <Columns
+                categories={["The lender", "The other holders"]}
+                series={[{ label: "Share of the earlier move, next quarter", color: INFERRED, values: [lag.follow * 100, lag.continuation * 100] }]}
+                format={(v) => `${v.toFixed(0)}%`}
+              />
+            </Figure>
+          )}
         </div>
         {synthetic && (
           <p className="note" style={{ marginTop: 16 }}>
             In the simulated market lenders' errors are symmetric and unrelated to credit quality, so the average mark should
-            lead and disagreement should warn of nothing. That is what these show. On real filings the same three charts are
-            open questions.
+            lead and disagreement should warn of nothing. That is what these show. On real filings the same charts are open
+            questions.
           </p>
         )}
       </section>

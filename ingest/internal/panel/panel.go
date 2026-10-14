@@ -129,6 +129,7 @@ type Report struct {
 	RowsRead        int            `json:"rows_read"`
 	RowsSuperseded  int            `json:"rows_superseded"`
 	RowsDuplicate   int            `json:"rows_duplicate_filing"`
+	RowsAfterCutoff int            `json:"rows_filed_after_cutoff,omitempty"`
 	RowsKept        int            `json:"rows_kept"`
 	Dropped         map[string]int `json:"dropped"`
 	Pieces          map[string]int `json:"pieces"`
@@ -145,6 +146,65 @@ type Report struct {
 	LastAsOf        string         `json:"last_asof"`
 	Resolve         resolve.Report `json:"resolve"`
 	UnmappedSectors []string       `json:"unmapped_sector_labels_sample"`
+	Until           string         `json:"filed_until,omitempty"`
+	Restated        Restatements   `json:"restatements"`
+}
+
+type Restatements struct {
+	Compared    int     `json:"compared"`
+	Changed     int     `json:"changed_over_tenth_point"`
+	ChangedOne  int     `json:"changed_over_one_point"`
+	MeanAbsDiff float64 `json:"mean_abs_diff_points"`
+}
+
+type restateKey struct {
+	cik   string
+	asof  day.Date
+	ident string
+}
+
+type amount struct {
+	adsh  string
+	filed day.Date
+	fv    float64
+	pr    float64
+}
+
+func (a *amount) add(adsh string, filed day.Date, fv, pr float64) {
+	switch {
+	case a.adsh == "" || filed > a.filed || (filed == a.filed && adsh > a.adsh):
+		*a = amount{adsh: adsh, filed: filed, fv: fv, pr: pr}
+	case adsh == a.adsh:
+		a.fv += fv
+		a.pr += pr
+	}
+}
+
+func compareRestated(original, restated map[restateKey]*amount) Restatements {
+	var out Restatements
+	sum := 0.0
+	for k, o := range original {
+		r, ok := restated[k]
+		if !ok || o.pr <= 0 || r.pr <= 0 {
+			continue
+		}
+		d := math.Abs(r.fv/r.pr-o.fv/o.pr) * 100
+		if d > 104 {
+			continue
+		}
+		out.Compared++
+		sum += d
+		if d > 0.1 {
+			out.Changed++
+		}
+		if d > 1 {
+			out.ChangedOne++
+		}
+	}
+	if out.Compared > 0 {
+		out.MeanAbsDiff = math.Round(sum/float64(out.Compared)*10000) / 10000
+	}
+	return out
 }
 
 type Panel struct {
@@ -232,13 +292,32 @@ func bucket(bp int32) int32 {
 }
 
 func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
-	rep := Report{Archives: len(archives), Dropped: map[string]int{}, Pieces: map[string]int{}}
+	return BuildUntil(archives, 0, logf)
+}
+
+func BuildUntil(archives []string, until day.Date, logf func(string, ...any)) (*Panel, error) {
+	rep := Report{Archives: len(archives), Dropped: map[string]int{}, Pieces: map[string]int{}, Until: until.String()}
+	late := func(r *soi.Row) bool { return !until.IsZero() && r.Filed > until }
+	original := map[restateKey]*amount{}
+	restated := map[restateKey]*amount{}
+	track := func(m map[restateKey]*amount, r *soi.Row) {
+		if r.Identifier == "" || !r.HasFairValue || !r.HasPrincipal || r.Principal <= 0 {
+			return
+		}
+		k := restateKey{r.CIK, r.AsOf, r.Identifier}
+		a := m[k]
+		if a == nil {
+			a = &amount{}
+			m[k] = a
+		}
+		a.add(r.Adsh, r.Filed, r.FairValue, r.Principal)
+	}
 
 	chosen := map[groupKey]filing{}
 	owner := map[string]int{}
 	for ai, a := range archives {
 		st, err := soi.ReadZip(a, func(r *soi.Row) error {
-			if r.CIK == "" || r.AsOf.IsZero() || r.Adsh == "" {
+			if r.CIK == "" || r.AsOf.IsZero() || r.Adsh == "" || late(r) {
 				return nil
 			}
 			if o, seen := owner[r.Adsh]; !seen {
@@ -286,6 +365,10 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 				drop("no holder or date")
 				return nil
 			}
+			if late(r) {
+				rep.RowsAfterCutoff++
+				return nil
+			}
 			if owner[r.Adsh] != ai {
 				rep.RowsDuplicate++
 				return nil
@@ -296,8 +379,14 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 			}
 			f := chosen[groupKey{r.CIK, r.AsOf}]
 			if f.adsh != r.Adsh {
+				if f.original && r.Period != r.AsOf {
+					track(restated, r)
+				}
 				rep.RowsSuperseded++
 				return nil
+			}
+			if f.original {
+				track(original, r)
 			}
 			if r.Identifier == "" {
 				drop("no identifier")
@@ -448,6 +537,8 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 		positions = kept
 	}
 	rep.RowsKept = len(positions)
+	rep.Restated = compareRestated(original, restated)
+	original, restated = nil, nil
 
 	assign, clusters, rrep := res.Resolve()
 	rep.Resolve = rrep

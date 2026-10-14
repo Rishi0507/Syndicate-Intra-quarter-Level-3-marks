@@ -1,8 +1,9 @@
 # Methodology
 
 This document specifies the model behind Syndicate: how a loan's value evolves, how lenders' marks
-relate to it, how the parameters are estimated, and how the resulting uncertainty becomes a quote.
-The same specification, with the fitted values for the current panel, is on the site's Method page.
+relate to it, how the parameters are estimated, what the marks can and cannot identify, and how the
+model is evaluated. The same specification, with the fitted values for the current panel, is on the
+site's Method page.
 
 All prices are fractions of par unless stated otherwise. Time is measured in trading days.
 
@@ -15,7 +16,9 @@ All prices are fractions of par unless stated otherwise. Time is measured in tra
 - [Information from other loans](#information-from-other-loans)
 - [Jumps](#jumps)
 - [Estimation](#estimation)
+- [What the marks identify](#what-the-marks-identify)
 - [Calibrated bands](#calibrated-bands)
+- [Evaluation design](#evaluation-design)
 - [From uncertainty to a quote](#from-uncertainty-to-a-quote)
 - [Information and liquidity](#information-and-liquidity)
 
@@ -32,8 +35,11 @@ flowchart LR
 
 ## Value process
 
-A loan's fair value $v_t$ is never observed. It moves each trading day with public credit markets,
-with a shock shared by its sector, and with news of its own:
+The latent value $v_t$ is the mark a lender with no habits of its own would report on day $t$: the
+holders' consensus once each lender's level, standing distance and delay are removed. It is never
+observed, and it is not an independent fair value. Where every holder of a loan is too generous, so
+is $v_t$. It moves each trading day with public credit markets, with a shock shared by its sector,
+and with news of its own:
 
 ```math
 v_t = v_{t-1} + \mu(v_{t-1}) + \beta(v_{t-1})\,x_t + s_t + u_t,
@@ -56,9 +62,9 @@ one rate from below and another from above, and gives stressed loans a drift of 
 ## Measurement model
 
 Lender $h$ marks the loan on a reporting date $a_q$, and the mark becomes public only when the
-filing lands. A mark is not fair value plus independent noise. Two lenders a point apart on a loan
-this quarter are mostly still a point apart in the next: a lender's distance from fair value is
-persistent. The lender's view of the loan is
+filing lands. A mark is not the latent value plus independent noise. Two lenders a point apart on a
+loan this quarter are mostly still a point apart in the next: a lender's distance from the latent
+value is persistent. The lender's view of the loan is
 
 ```math
 \tilde m_{h,q} = v_{a_q} + b_h + d_{h,q},
@@ -115,8 +121,11 @@ the filing date.
 
 ## Information from other loans
 
+This component was tested and is not part of the model. It is described because the evaluation
+reports it as an ablation.
+
 The second slot component $c_a$ freezes the sector's cumulative shock over the quarter. Each loan is
-filtered alone, which keeps thousands of loans tractable, and the link between them is then
+filtered alone, which keeps thousands of loans tractable. The link between loans can then be
 restored. Each loan's first mark of a quarter surprises the public forecast by
 
 ```math
@@ -124,8 +133,10 @@ restored. Each loan's first mark of a quarter surprises the public forecast by
 ```
 
 The precision-weighted mean of the other loans' surprises, accumulated week by week as they are
-filed, is fed to each loan as an observation of $c_a$. The loan's own surprise is excluded, so it
-never observes itself.
+filed, is fed to each loan as an observation of $c_a$, with the loan's own surprise excluded. In
+simulation, where sectors share shocks by construction, this improves accuracy. On the filings it
+changes the forecast error by 0.01% across 97,521 forecasts, so the model leaves it out.
+The sector shock remains part of each loan's volatility.
 
 ## Jumps
 
@@ -151,11 +162,36 @@ the rules that clean the filings.
 | Step | Quantity                               | Identification                                                                                                                                                                                                       |
 | ---: | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 |    1 | Public sensitivity, drift, pull to par | Quarterly changes in the consensus mark are regressed on the change in the public spread. Each quarter is left out in turn and the sensitivity is shrunk by how far it moves.                                      |
-|    2 | Marking lag                            | A fair value cannot be forecast from its own past. If peers' marks last quarter predict a lender's change this quarter, the lender is marking late, by the ratio of two covariances. No public market is required. |
+|    2 | Marking lag                            | If peers' marks last quarter predict a lender's change this quarter, the lender is read as marking late, by the ratio of two covariances. No public market is required. The assumption behind this reading is discussed below. |
 |    3 | Bias and distance                      | From how each lender's views sit against other lenders' views of the same loan on the same date. A fixed-point iteration separates the two sides' distances.                                                       |
 |    4 | Persistence of disagreement            | A gap has a standing part and a transitory part. Its autocorrelations at one and two quarters are diluted equally by the transitory part, so their ratio gives the rate at which the standing part fades.          |
 |    5 | Sector and loan volatility             | What public markets leave unexplained is split into a part shared by a sector within a quarter and a remainder, whose variance is fitted as a function of stress.                                                 |
 |    6 | Jumps                                  | Frequency and size are estimated from the tail of the same residuals.                                                                                                                                                |
+
+## What the marks identify
+
+Marks identify differences between lenders well and absolute quantities poorly.
+
+- **Level.** A lender's level bias is measured against other lenders of the same loan. A bias shared
+  by every holder is invisible: the estimate is a consensus, not a fair value.
+- **Delay.** The marking-lag step reads predictability of a lender's change from peers' earlier
+  changes as late marking. This rests on the assumption that a loan's value has no trend of its
+  own from one quarter to the next. A loan that kept deteriorating for its own reasons would produce
+  the same pattern as a lender that marks it down late. The same problem arises when smoothing is
+  read from the serial correlation of hedge fund or private equity returns, and it cannot be
+  removed with marks alone.
+- **A partial check.** Where the other holders of a loan move it by a point or more in a quarter and
+  a lender does not, 20% of their move reaches that lender's mark in the next quarter, and the
+  other holders themselves move a further 13% in the same direction (2,031 cases). The
+  continuation is an estimate of the trend; only the difference is unambiguously late marking. The
+  fitted lag shares are therefore upper bounds on lateness, and the Lenders page states them as
+  such.
+- **Persistence.** The share of a disagreement carried into the next quarter is identified from
+  the ratio of its autocorrelations at one and two quarters, which a transitory component dilutes
+  equally.
+
+Testing the delay assumption properly requires an outside measure of value, such as secondary trade
+prints or realised recoveries, which the filings do not contain.
 
 ## Calibrated bands
 
@@ -179,6 +215,37 @@ This holds its stated coverage for any distribution of errors, provided they are
 Across quarters they are not quite exchangeable: when marks move more than in any earlier quarter,
 the band is too narrow for that quarter, and the Evidence page reports by how much. The same floors
 and multipliers apply to the band around the value itself.
+
+## Evaluation design
+
+The evaluation is built so that every forecast uses only information available when it was made.
+
+- **Walk-forward.** For each of ten quarters, the model is fitted on marks filed before the
+  quarter ended, then forecasts each mark of that quarter on the day before the lender files it,
+  using every mark filed by then, including other lenders' marks of the same quarter.
+- **Target.** Forecasts are scored against the first-reported mark. When a later filing repeats a
+  reporting date as a comparative, the panel keeps the original. Of 92,861 marks that
+  can be matched to a later comparative, 629 (0.7%) changed by more than 0.1 points and
+  402 (0.4%) by more than one point.
+- **Ex-ante grouping.** Results are reported by information known at the forecast date, such as
+  whether another lender had filed and how far the estimate had moved from the lender's last mark.
+  Results grouped by the realised move are also shown, but such a grouping favours whichever
+  forecast predicted the move.
+- **Rules that saw later filings.** Borrower matching, the splitting of pieces of debt and several
+  cleaning rules use every filing in the panel, including filings made after a forecast date.
+  `scripts/vintage.sh` rebuilds the panel for each quarter from rows filed by 105 days after the
+  quarter ended and repeats the backtest for that quarter. Pooled over the ten quarters, the share of
+  squared error removed is 13.6% on panels rebuilt this way against 15.7% on the full
+  panel, and 47% against 56% where another lender had filed. The rebuilt figures
+  are the ones to expect in real time. The gap comes mostly from a few loans that were restructured:
+  later filings show that the new paper is a separate loan, which the panel as it stood could not
+  know.
+- **Design choices.** The cleaning rules, the model and its estimation steps were designed on
+  filings made up to July 2026. Reports filed in August 2026 were added afterwards from EDGAR, with
+  no change to any rule. On 2026 Q2, mostly marked in those reports, the model removes
+  15% of squared error across 11,215 forecasts.
+- **Ablations.** Components that were tested and not adopted are reported beside the model, with
+  their effect on the same forecasts.
 
 ## From uncertainty to a quote
 

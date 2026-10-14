@@ -3,7 +3,7 @@ use std::path::Path;
 
 use crate::calib::Fit;
 use crate::data::{Obs, Panel, Table};
-use crate::engine::{Engine, FULL};
+use crate::engine::{Engine, MODEL};
 use crate::eval::{Bands, Regime};
 use crate::stats::norm_inv;
 
@@ -89,7 +89,7 @@ pub fn score(panel: &Panel, level: &[f64], fit: &Fit, bands: &Bands, dir: &Path)
     let engine = Engine::new(panel, level);
     let insts: Vec<usize> = (0..panel.instruments.len()).collect();
     let end = panel.days.len() - 1;
-    let runs = engine.run(fit, FULL, &insts, &|_: &Obs| true, end, true);
+    let runs = engine.run(fit, MODEL, &insts, &|_: &Obs| true, end, true);
 
     let edges = [0usize, 10, 30, 60, 100];
     let labels = ["0-9 days", "10-29 days", "30-59 days", "60-99 days"];

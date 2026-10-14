@@ -31,13 +31,16 @@ impl Regime {
     }
 }
 
-pub const RUNGS: [(&str, &str); 5] = [
+pub const RUNGS: [(&str, &str); 4] = [
     ("stale", "Last mark carried forward"),
     ("public_raw", "Rolled forward with public spreads and pull to par"),
     ("public", "With each lender's habits modelled"),
     ("peers", "With other lenders' marks of the same loan"),
-    ("full", "With sector repricing from other loans"),
 ];
+
+pub const MODEL_RUNG: usize = 3;
+
+pub const ABLATIONS: [(&str, &str); 1] = [("sector", "Adding sector repricing from other loans")];
 
 fn point(r: &Record, rung: usize) -> f64 {
     match rung {
@@ -45,7 +48,7 @@ fn point(r: &Record, rung: usize) -> f64 {
         1 => r.public_raw.0,
         2 => r.public.0,
         3 => r.peers.0,
-        _ => r.full.0,
+        _ => r.sector.0,
     }
 }
 
@@ -82,6 +85,16 @@ pub struct Coverage {
     pub width90: f64,
     pub naive_width90: f64,
     pub naive_cover90: f64,
+    pub matched_width90: f64,
+    pub matched_naive_width90: f64,
+}
+
+fn exact_quantile(v: &mut [f64], level: f64) -> f64 {
+    if v.is_empty() {
+        return f64::NAN;
+    }
+    v.sort_by(|a, b| a.total_cmp(b));
+    v[(((v.len() as f64) * level).ceil() as usize).clamp(1, v.len()) - 1]
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -119,6 +132,7 @@ pub fn coverage(records: &[Record]) -> Vec<(Regime, Coverage)> {
         let mut c = Coverage::default();
         let (mut hit_g, mut hit_c) = ([0usize; 4], [0usize; 4]);
         let (mut width, mut naive_width, mut naive_hit) = (0.0, 0.0, 0usize);
+        let (mut ratios, mut halves, mut moved) = (Vec::new(), Vec::new(), Vec::new());
         for &q in &quarters {
             let batch: Vec<&&Record> = order.iter().filter(|r| r.ym == q && Regime::of(r.prev) == regime).collect();
             if past.len() >= MIN_SCORES {
@@ -128,7 +142,7 @@ pub fn coverage(records: &[Record]) -> Vec<(Regime, Coverage)> {
                 scores.sort_by(|a, b| a.total_cmp(b));
                 let naive90 = conformal_quantile(&moves, 0.90);
                 for r in &batch {
-                    let (mean, sd) = r.full;
+                    let (mean, sd) = r.model();
                     let e = (r.price - mean).abs();
                     for (k, &level) in LEVELS.iter().enumerate() {
                         if e <= norm_inv(0.5 + level / 2.0) * sd {
@@ -140,8 +154,13 @@ pub fn coverage(records: &[Record]) -> Vec<(Regime, Coverage)> {
                         }
                         if k == 2 {
                             width += 2.0 * half;
+                            if half > 0.0 {
+                                ratios.push(e / half);
+                                halves.push(half);
+                            }
                         }
                     }
+                    moved.push((r.price - r.prev).abs());
                     naive_width += 2.0 * naive90;
                     if (r.price - r.prev).abs() <= naive90 {
                         naive_hit += 1;
@@ -150,7 +169,7 @@ pub fn coverage(records: &[Record]) -> Vec<(Regime, Coverage)> {
                 }
             }
             for r in &batch {
-                let (mean, sd) = r.full;
+                let (mean, sd) = r.model();
                 if sd > 0.0 {
                     past.push(((r.price - mean).abs(), sd));
                 }
@@ -167,6 +186,9 @@ pub fn coverage(records: &[Record]) -> Vec<(Regime, Coverage)> {
             c.width90 = width / n;
             c.naive_width90 = naive_width / n;
             c.naive_cover90 = naive_hit as f64 / n;
+            let scale = exact_quantile(&mut ratios, 0.90);
+            c.matched_width90 = 2.0 * scale * halves.iter().sum::<f64>() / halves.len().max(1) as f64;
+            c.matched_naive_width90 = 2.0 * exact_quantile(&mut moved, 0.90);
         }
         out.push((regime, c));
     }
@@ -175,7 +197,7 @@ pub fn coverage(records: &[Record]) -> Vec<(Regime, Coverage)> {
 
 pub fn bands(records: &[Record]) -> Bands {
     let pairs = |sel: &dyn Fn(&Record) -> bool| -> Vec<(f64, f64)> {
-        records.iter().filter(|r| sel(r) && r.full.1 > 0.0).map(|r| ((r.price - r.full.0).abs(), r.full.1)).collect()
+        records.iter().filter(|r| sel(r) && r.model().1 > 0.0).map(|r| ((r.price - r.model().0).abs(), r.model().1)).collect()
     };
     let pooled = pairs(&|_| true);
     let mut out = Bands { mult: [[0.0; 4]; 3], floor: [0.0; 3] };
@@ -213,7 +235,7 @@ pub fn pit(records: &[&Record]) -> [f64; 10] {
         return h;
     }
     for r in records {
-        let (mean, sd) = r.full;
+        let (mean, sd) = r.model();
         let u = norm_cdf((r.price - mean) / sd);
         h[((u * 10.0) as usize).min(9)] += 1.0;
     }
@@ -241,10 +263,58 @@ fn ladder(records: &[&Record]) -> Json {
     )
 }
 
+pub const SIGNAL_EDGES: [f64; 5] = [0.0, 0.0025, 0.01, 0.03, f64::INFINITY];
+
+fn signal_row(label: &str, records: &[&Record]) -> Json {
+    let stale = score(records, 0);
+    let model = score(records, MODEL_RUNG);
+    Json::obj()
+        .with("label", label)
+        .with("n", records.len())
+        .with("stale_mae", Json::round(stale.mae * 100.0, 4))
+        .with("stale_rmse", Json::round(stale.rmse * 100.0, 4))
+        .with("mae", Json::round(model.mae * 100.0, 4))
+        .with("rmse", Json::round(model.rmse * 100.0, 4))
+        .with("skill", Json::round(model.skill, 4))
+}
+
+fn by_signal(records: &[Record]) -> Json {
+    let moved = |r: &Record| (r.model().0 - r.prev).abs();
+    let labels = ["Under 0.25 points", "0.25 to 1 point", "1 to 3 points", "3 points or more"];
+    let mut rows: Vec<Json> = (0..labels.len())
+        .map(|k| {
+            let sel: Vec<&Record> = records.iter().filter(|r| moved(r) >= SIGNAL_EDGES[k] && moved(r) < SIGNAL_EDGES[k + 1]).collect();
+            signal_row(labels[k], &sel)
+        })
+        .collect();
+    let peer_moved: Vec<&Record> = records.iter().filter(|r| r.seen > 0 && moved(r) >= 0.01).collect();
+    rows.push(signal_row("A peer has filed and the estimate moved 1 point or more", &peer_moved));
+    Json::Arr(rows)
+}
+
+fn ablations(records: &[&Record]) -> Json {
+    let model = score(records, MODEL_RUNG);
+    Json::Arr(
+        ABLATIONS
+            .iter()
+            .enumerate()
+            .map(|(k, (id, label))| {
+                let s = score(records, RUNGS.len() + k);
+                score_json(&s)
+                    .with("id", *id)
+                    .with("label", *label)
+                    .with("rmse_change", Json::round(if model.rmse > 0.0 { s.rmse / model.rmse - 1.0 } else { 0.0 }, 6))
+            })
+            .collect(),
+    )
+}
+
 pub fn report(records: &[Record]) -> Json {
     let all: Vec<&Record> = records.iter().collect();
     let followers: Vec<&Record> = records.iter().filter(|r| r.seen > 0).collect();
     let movers: Vec<&Record> = records.iter().filter(|r| (r.price - r.prev).abs() >= 0.01).collect();
+    let big_movers: Vec<&Record> = records.iter().filter(|r| (r.price - r.prev).abs() >= 0.03).collect();
+    let quiet: Vec<&Record> = records.iter().filter(|r| (r.price - r.prev).abs() < 0.01).collect();
 
     let mut by_regime = Vec::new();
     for regime in REGIMES {
@@ -264,6 +334,8 @@ pub fn report(records: &[Record]) -> Json {
                 .with("width90", Json::round(c.width90 * 100.0, 4))
                 .with("naive_width90", Json::round(c.naive_width90 * 100.0, 4))
                 .with("naive_cover90", Json::round(c.naive_cover90, 4))
+                .with("matched_width90", Json::round(c.matched_width90 * 100.0, 4))
+                .with("matched_naive_width90", Json::round(c.matched_naive_width90 * 100.0, 4))
         })
         .collect::<Vec<_>>();
 
@@ -275,11 +347,15 @@ pub fn report(records: &[Record]) -> Json {
         .iter()
         .map(|&q| {
             let sel: Vec<&Record> = records.iter().filter(|r| calendar(r.ym) == q).collect();
+            let peers: Vec<&Record> = sel.iter().copied().filter(|r| r.seen > 0).collect();
             Json::obj()
                 .with("ym", q)
                 .with("n", sel.len())
                 .with("stale", Json::round(score(&sel, 0).rmse * 100.0, 4))
-                .with("full", Json::round(score(&sel, 4).rmse * 100.0, 4))
+                .with("model", Json::round(score(&sel, MODEL_RUNG).rmse * 100.0, 4))
+                .with("followers", peers.len())
+                .with("followers_stale", Json::round(score(&peers, 0).rmse * 100.0, 4))
+                .with("followers_model", Json::round(score(&peers, MODEL_RUNG).rmse * 100.0, 4))
         })
         .collect::<Vec<_>>();
 
@@ -289,6 +365,10 @@ pub fn report(records: &[Record]) -> Json {
         .with("all", ladder(&all))
         .with("followers", ladder(&followers))
         .with("movers", ladder(&movers))
+        .with("big_movers", ladder(&big_movers))
+        .with("quiet", ladder(&quiet))
+        .with("ablations", ablations(&all))
+        .with("by_signal", by_signal(records))
         .with("by_regime", by_regime)
         .with("coverage", cov)
         .with("by_quarter", by_quarter)
@@ -302,6 +382,10 @@ pub fn print_ladder(title: &str, records: &[&Record]) {
         let s = score(records, k);
         println!("  {:<46} {:>8.3} {:>8.3} {:>7.1}%", label, s.mae * 100.0, s.rmse * 100.0, s.skill * 100.0);
     }
+    for (k, (_, label)) in ABLATIONS.iter().enumerate() {
+        let s = score(records, RUNGS.len() + k);
+        println!("  {:<46} {:>8.3} {:>8.3} {:>7.1}%   not adopted", label, s.mae * 100.0, s.rmse * 100.0, s.skill * 100.0);
+    }
 }
 
 #[cfg(test)]
@@ -310,7 +394,20 @@ mod tests {
     use crate::stats::Rng;
 
     fn rec(ym: i32, price: f64, prev: f64, mean: f64, sd: f64) -> Record {
-        Record { inst: 0, family: 0, ym, price, prev, public_raw: (mean, sd), public: (mean, sd), peers: (mean, sd), full: (mean, sd), seen: 1 }
+        Record {
+            inst: 0,
+            family: 0,
+            ym,
+            price,
+            prev,
+            public_raw: (mean, sd),
+            public: (mean, sd),
+            peers: (mean, sd),
+            sector: (mean, sd),
+            seen: 1,
+            principal: 1.0,
+            filed: 0,
+        }
     }
 
     #[test]
@@ -342,11 +439,37 @@ mod tests {
     }
 
     #[test]
+    fn matched_widths_hold_ninety_percent() {
+        let mut rng = Rng::new(9);
+        let mut records = Vec::new();
+        for q in 0..10 {
+            for _ in 0..500 {
+                let e = 0.01 * rng.normal();
+                records.push(rec(q * 3, 0.98 + e, 0.98, 0.98, 0.004));
+            }
+        }
+        let c = &coverage(&records)[0].1;
+        assert!(c.matched_width90 > 0.0 && c.matched_naive_width90 > 0.0);
+        let half = c.matched_width90 / 2.0;
+        let inside = records.iter().filter(|r| (r.price - r.model().0).abs() <= half + 1e-12).count() as f64 / records.len() as f64;
+        assert!((inside - 0.9).abs() < 0.03, "inside {inside}");
+        assert!((c.matched_width90 - c.matched_naive_width90).abs() < 0.002);
+    }
+
+    #[test]
+    fn signal_groups_use_the_forecast_not_the_outcome() {
+        let rs = vec![rec(0, 0.90, 0.99, 0.95, 0.01), rec(0, 0.99, 0.99, 0.989, 0.01)];
+        let report = by_signal(&rs).to_string();
+        assert!(report.contains("\"label\":\"Under 0.25 points\",\"n\":1"), "{report}");
+        assert!(report.contains("\"label\":\"3 points or more\",\"n\":1"), "{report}");
+    }
+
+    #[test]
     fn skill_is_relative_to_stale() {
         let rs = vec![rec(0, 0.95, 0.99, 0.96, 0.01), rec(0, 0.97, 0.99, 0.97, 0.01)];
         let refs: Vec<&Record> = rs.iter().collect();
         let stale = score(&refs, 0);
-        let model = score(&refs, 4);
+        let model = score(&refs, MODEL_RUNG);
         assert_eq!(stale.skill, 0.0);
         assert!(model.skill > 0.9 && model.rmse < stale.rmse);
     }

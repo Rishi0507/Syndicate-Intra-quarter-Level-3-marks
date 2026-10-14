@@ -16,6 +16,22 @@ export interface Coverage {
   width90: number;
   naive_width90: number;
   naive_cover90: number;
+  matched_width90: number;
+  matched_naive_width90: number;
+}
+
+export interface Ablation extends Rung {
+  rmse_change: number;
+}
+
+export interface Signal {
+  label: string;
+  n: number;
+  stale_mae: number;
+  stale_rmse: number;
+  mae: number;
+  rmse: number;
+  skill: number;
 }
 
 export interface Evaluation {
@@ -24,10 +40,31 @@ export interface Evaluation {
   all: Rung[];
   followers: Rung[];
   movers: Rung[];
+  big_movers: Rung[];
+  quiet: Rung[];
+  ablations: Ablation[];
+  by_signal: Signal[];
   by_regime: { regime: string; ladder: Rung[]; pit: number[] }[];
   coverage: Coverage[];
-  by_quarter: { ym: number; n: number; stale: number; full: number }[];
+  by_quarter: { ym: number; n: number; stale: number; model: number; followers: number; followers_stale: number; followers_model: number }[];
   pit: number[];
+}
+
+export interface Vintage {
+  ym: number;
+  n: number;
+  followers: number;
+  stale: number;
+  model: number;
+  skill: number;
+  followers_stale: number;
+  followers_model: number;
+  followers_skill: number;
+}
+
+export interface Audit {
+  ingest?: Record<string, number | string>;
+  vintage: Vintage[] | null;
 }
 
 export interface TruthRow {
@@ -43,6 +80,7 @@ export interface TruthRow {
 
 export interface Insight {
   shared_cells: number;
+  catch_up?: { n: number; follow: number; continuation: number };
   dispersion: {
     regime: string;
     n: number;
@@ -124,6 +162,7 @@ export interface Meta {
   eval: Evaluation;
   truth: TruthRow[] | null;
   insight: Insight;
+  audit?: Audit;
 }
 
 export interface Loans {

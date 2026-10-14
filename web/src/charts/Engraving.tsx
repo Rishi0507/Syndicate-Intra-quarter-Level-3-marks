@@ -1,8 +1,3 @@
-// The ground of the page, engraved the way banknotes and share certificates
-// are. Each band is one wave drawn round a circle several times over, every
-// copy a fraction of a wavelength on from the last, so the lines cross into
-// a braid. Bands of different pitch nest inside one another.
-
 import { useMemo } from "react";
 
 interface Band {

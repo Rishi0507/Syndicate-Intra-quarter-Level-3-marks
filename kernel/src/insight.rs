@@ -1,17 +1,9 @@
-//! Findings read straight off the marks, before any model is involved.
-//!
-//! These are the facts the model exists to explain: that lenders disagree
-//! about the same loan, by how much, whether the disagreement warns of
-//! trouble, and which lender's mark is the best guide to where the others
-//! will go.
-
 use std::collections::HashMap;
 
 use crate::data::Panel;
 use crate::json::Json;
 use crate::stats::{quantile_sorted, Ols};
 
-/// All families' marks of one loan on one date.
 struct Cell {
     inst: usize,
     ym: i32,
@@ -64,8 +56,6 @@ fn bucket(level: f64) -> usize {
 
 const BUCKETS: [&str; 3] = ["performing", "watch", "stressed"];
 
-/// Area under the ROC curve of `score` as a predictor of `event`, by the
-/// rank-sum identity. Ties share their average rank.
 fn auc(pairs: &mut [(f64, bool)]) -> f64 {
     pairs.sort_by(|a, b| a.0.total_cmp(&b.0));
     let (mut rank_sum, mut pos, mut i) = (0.0, 0.0, 0);
@@ -90,8 +80,6 @@ fn auc(pairs: &mut [(f64, bool)]) -> f64 {
     (rank_sum - pos * (pos + 1.0) / 2.0) / (pos * neg)
 }
 
-/// A fall in the consensus of at least this much within a quarter is counted
-/// as a markdown event.
 const MARKDOWN: f64 = 0.03;
 
 pub fn report(panel: &Panel) -> Json {
@@ -99,7 +87,6 @@ pub fn report(panel: &Panel) -> Json {
     let index: HashMap<(usize, i32), usize> = cs.iter().enumerate().map(|(i, c)| ((c.inst, c.ym), i)).collect();
     let shared: Vec<&Cell> = cs.iter().filter(|c| c.prices.len() >= 2).collect();
 
-    // ---- How much do lenders disagree? ------------------------------------
     let ps = [0.5, 0.75, 0.9, 0.95, 0.99];
     let mut by_bucket: Vec<Vec<f64>> = vec![Vec::new(); 3];
     for c in &shared {
@@ -122,7 +109,6 @@ pub fn report(panel: &Panel) -> Json {
         })
         .collect::<Vec<_>>();
 
-    // Median disagreement through time.
     let mut by_quarter: HashMap<i32, Vec<f64>> = HashMap::new();
     for c in &shared {
         by_quarter.entry(c.ym).or_default().push(max(&c.prices) - min(&c.prices));
@@ -141,14 +127,6 @@ pub fn report(panel: &Panel) -> Json {
         })
         .collect::<Vec<_>>();
 
-    // ---- Whose mark leads? ------------------------------------------------
-    //
-    // For a loan several lenders hold, take this quarter's lowest, mean,
-    // median and highest mark as four competing forecasts of next quarter's
-    // consensus. If marks converge on the most cautious lender, the lowest
-    // mark wins. The regression asks the same thing with both tails at once:
-    // how much of the gap to the low mark, and to the high mark, does the
-    // consensus close?
     let mut errs = [[0.0f64; 4]; 3];
     let mut counts = [0usize; 3];
     let mut ols = Ols::new(3);
@@ -175,14 +153,7 @@ pub fn report(panel: &Panel) -> Json {
         _ => Json::Null,
     };
 
-    // ---- Does disagreement warn of markdowns? -----------------------------
-    //
-    // Sort shared loans by how far apart their lenders are this quarter and
-    // look at how often the consensus then falls by three points or more.
-    // The level of the mark is the obvious rival predictor, so the same is
-    // done for it, and disagreement is also tested among performing loans
-    // alone, where the level says nothing.
-    let mut events: Vec<(f64, f64, bool)> = Vec::new(); // range, level, markdown next quarter
+    let mut events: Vec<(f64, f64, bool)> = Vec::new();
     for c in &shared {
         let Some(&ni) = index.get(&(c.inst, c.ym + 3)) else { continue };
         let level = mean(&c.prices);
@@ -236,7 +207,6 @@ mod tests {
         assert!((auc(&mut perfect) - 1.0).abs() < 1e-12);
         let mut inverted: Vec<(f64, bool)> = (0..100).map(|i| (i as f64, i < 50)).collect();
         assert!(auc(&mut inverted).abs() < 1e-12);
-        // A constant score cannot rank anything.
         let mut flat: Vec<(f64, bool)> = (0..100).map(|i| (1.0, i % 2 == 0)).collect();
         assert!((auc(&mut flat) - 0.5).abs() < 1e-12);
         assert!(auc(&mut [(1.0, true), (2.0, true)]).is_nan());

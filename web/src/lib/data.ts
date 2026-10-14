@@ -1,5 +1,3 @@
-// Loads the static files the kernel's `export` command writes.
-
 export interface Rung {
   id: string;
   label: string;
@@ -77,7 +75,6 @@ export interface Family {
   overlap: number;
   marks: number;
   live: number;
-  /** phi, bias and noise at full precision, as the filter consumes them. */
   fit: [number, number, number];
 }
 
@@ -92,17 +89,13 @@ export interface Meta {
   families: Family[];
   fit: {
     dynamics: number[];
-    /** Share of a mark carried over from the previous quarter, on changes that touch stress. */
     phi_bar: number;
-    /** The same where the lender's own mark was already below 97, and where only the others' were. */
     phi_stressed: number;
     phi_entering: number;
     n_lead_lag: number;
-    /** Share of a lender's distance from fair value still there a quarter on. */
     carry: number;
     carry_lags: [number, number];
     n_carry: number;
-    /** Share of each public sensitivity kept after leaving out each quarter in turn. */
     beta_kept: [number, number];
     days_per_quarter: number;
     r2_public: number;
@@ -114,9 +107,7 @@ export interface Meta {
     idio_bins: [number, number, number][];
   };
   levels: number[];
-  /** Bands are mean ± multiplier × (sd + floor), per regime and level. */
   multipliers: number[][];
-  /** Typical forecast error of each regime, as a fraction of par. */
   floors: number[];
   engine: {
     batch_days: number;
@@ -127,7 +118,6 @@ export interface Meta {
     sd_hi_points: number;
     min_train: number;
   };
-  /** sector, year-month, week, weight, weighted sum, count, inflation */
   batches: [number, number, number, number, number, number, number][];
   arrivals: number[];
   mean_sd: (number | null)[];
@@ -154,17 +144,11 @@ export interface Loans {
 export interface Universe {
   meta: Meta;
   loans: Loans;
-  /** Three per mark: family, as-of day, arrival day. */
   marksI: Uint16Array;
-  /** Five per mark: price, previous price, principal ($m), sector weight, weight times surprise. */
   marksF: Float32Array;
-  /** Two per sample: price code, standard error code. */
   path: Uint8Array;
-  /** Fall in the public spread factor on each grid day. */
   shocks: Float64Array;
-  /** Each grid day as a UTC timestamp. */
   time: number[];
-  /** Batches indexed by sector then year-month. */
   batches: Map<number, Map<number, { week: number; w: number; wv: number; n: number; inflate: number }[]>>;
 }
 
@@ -180,9 +164,7 @@ export function dayToTime(d: number): number {
   return Date.UTC(Math.floor(d / 10000), (Math.floor(d / 100) % 100) - 1, d % 100);
 }
 
-/** Builds the universe from the five exported files, already read. */
 export function assembleUniverse(meta: Meta, loans: Loans, marksI: ArrayBuffer, marksF: ArrayBuffer, path: ArrayBuffer): Universe {
-  // Identical arithmetic to the kernel's, so the browser's curves match it.
   const level = meta.factor.level;
   const shocks = new Float64Array(level.length);
   for (let t = 1; t < level.length; t++) {
@@ -225,12 +207,10 @@ export async function loadUniverse(base = "./data/"): Promise<Universe> {
   return assembleUniverse(meta, loans, mi, mf, path);
 }
 
-/** Year-month index of a yyyymmdd date, as the kernel counts it. */
 export function yearMonth(d: number): number {
   return Math.floor(d / 10000) * 12 + (Math.floor(d / 100) % 100) - 1;
 }
 
-/** Decodes the compressed path of one loan at one grid day. */
 export function pathAt(u: Universe, loan: number, day: number): { price: number; sd: number } | null {
   const start = u.loans.start[loan];
   if (day < start || day > u.loans.last[loan]) {

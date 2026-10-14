@@ -1,13 +1,6 @@
-// Price as a colour.
-//
-// One hue, as a sequential scale should be. A loan at par is the colour of
-// the page and draws no attention; the further below par it is marked, the
-// deeper the red. The stops live with the theme, because canvases need them.
-
 import { getState } from "../state";
 import { PALETTES } from "../theme";
 
-/** RGB in 0..1 for a price in points, in the current theme. */
 export function priceRgb(points: number): [number, number, number] {
   const stops = PALETTES[getState().theme].price;
   if (points <= stops[0][0]) {
@@ -29,16 +22,12 @@ export function priceCss(points: number): string {
   return `rgb(${Math.round(r * 255)} ${Math.round(g * 255)} ${Math.round(b * 255)})`;
 }
 
-/** The price scale as a CSS gradient, lowest price on the left. */
 export function priceGradient(): string {
   const stops = PALETTES[getState().theme].price;
   const [lo, hi] = [stops[0][0], stops[stops.length - 1][0]];
   return `linear-gradient(90deg, ${stops.map(([p, c]) => `rgb(${c.join(" ")}) ${(((p - lo) / (hi - lo)) * 100).toFixed(1)}%`).join(", ")})`;
 }
 
-// Chart colours are CSS custom properties, so every chart follows the theme
-// without being told. What was observed and what was inferred keep their
-// meaning in both: marks in the page's ink, the model in gilt.
 export const SERIES = ["var(--series-1)", "var(--series-2)", "var(--series-3)"] as const;
 export const RUNGS = ["var(--rung-0)", "var(--rung-1)", "var(--rung-2)", "var(--rung-3)", "var(--rung-4)"] as const;
 export const INFERRED = "var(--inferred)";

@@ -1,17 +1,3 @@
-// Checks that the browser's path through the kernel gives the same answer as
-// the native program.
-//
-// The native export writes a handful of loans' daily estimates at full
-// precision. This script loads the same static files the site loads, runs
-// the site's own code (bundled on the fly) against the WebAssembly module,
-// and compares. Marks travel to the browser in single precision, so
-// agreement is to about seven significant figures, not sixteen.
-//
-//   node scripts/check-kernel.mjs [build-dir]
-//
-// Without an argument the build directory is the one the site's data was
-// exported from: real filings or the generated universe.
-
 import { build } from "esbuild";
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";

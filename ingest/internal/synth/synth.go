@@ -1,15 +1,3 @@
-// Package synth generates a private credit universe with a known answer and
-// writes it in the SEC's own file format.
-//
-// It exists for two reasons. The pipeline and the kernel can be tested end to
-// end without network access, and the kernel can be scored against the true
-// latent value of every loan, which no real data set will ever disclose.
-//
-// The universe is deliberately awkward in the ways real filings are: lenders
-// name the same borrower differently, write identifiers in different grammars,
-// file on different days, repeat prior periods as comparatives, and mix in
-// equity, unfunded commitments and non-dollar loans that must be filtered out.
-// Nothing here is, or is derived from, a real company or a real mark.
 package synth
 
 import (
@@ -28,28 +16,22 @@ import (
 	"syndicate/ingest/internal/taxonomy"
 )
 
-// Config sizes the universe. The zero value is not useful; use Default.
 type Config struct {
 	Seed      int64
 	Families  int
 	Borrowers int
-	Start     day.Date // first day of the latent process
-	End       day.Date // last day of the latent process
+	Start     day.Date
+	End       day.Date
 }
 
-// Default is a universe large enough to exercise every code path and small
-// enough to generate in a few seconds.
 func Default() Config {
 	return Config{Seed: 20260513, Families: 34, Borrowers: 1500,
 		Start: day.New(2022, 7, 1), End: day.New(2026, 9, 30)}
 }
 
-// Truth is the answer key written alongside the SEC-format archives.
 type Truth struct {
-	// Entity maps "cik|identifier" to the true borrower index.
 	Entity map[string]int
-	// Core is each borrower's normalised name, the join key to the panel.
-	Core []string
+	Core   []string
 }
 
 var prefixes = strings.Fields(`Apex Summit Northwind Cobalt Meridian Harbor Granite Sterling Vantage
@@ -83,8 +65,6 @@ var businesses = []struct {
 	{"Foods", "food"}, {"Beverage Company", "food"},
 }
 
-// sectorVocab holds two house vocabularies for the same sectors, so the
-// pipeline has to map labels rather than match them.
 var sectorVocab = map[string][2]string{
 	"software":   {"Software", "High Tech Industries"},
 	"healthcare": {"Health Care Providers & Services", "Healthcare & Pharmaceuticals"},
@@ -115,7 +95,7 @@ var vehicleKinds = []string{"Capital Corp", "Private Credit Fund", "Senior Lendi
 type borrower struct {
 	base, alias  string
 	sector       string
-	senior       []float64 // daily true price, 1.0 = par
+	senior       []float64
 	junior       []float64
 	hasJunior    bool
 	spreadBp     int
@@ -128,30 +108,26 @@ type borrower struct {
 
 type family struct {
 	name   string
-	theta  float64 // share of the gap to fair value closed each quarter
-	bias   float64 // level bias in price points
-	noise  float64 // valuation noise at par
-	style  int     // identifier grammar
-	vocab  int     // sector vocabulary
-	types  int     // how the type axis is populated
-	lagQ   int     // days from quarter end to 10-Q
-	lagK   int     // days from fiscal year end to 10-K
-	fye    int     // fiscal year end month
+	theta  float64
+	bias   float64
+	noise  float64
+	style  int
+	vocab  int
+	types  int
+	lagQ   int
+	lagK   int
+	fye    int
 	weight float64
 	funds  []*fund
-	// marks reported so far, per borrower and class, for the smoothing recursion
-	last map[[2]int]float64
-	// dist is the family's standing distance from fair value on each loan,
-	// in units of its own noise.
-	dist map[[2]int]float64
-	// how this family spells each borrower
-	spell map[int]string
+	last   map[[2]int]float64
+	dist   map[[2]int]float64
+	spell  map[int]string
 }
 
 type fund struct {
 	cik, name string
 	share     float64
-	holds     map[int]float64 // borrower -> principal held
+	holds     map[int]float64
 }
 
 type gen struct {
@@ -164,7 +140,7 @@ type gen struct {
 	bor     []*borrower
 	fams    []*family
 	truth   Truth
-	reports map[[3]int]float64 // family, borrower, class*1000+quarter -> mark
+	reports map[[3]int]float64
 }
 
 func isWeekday(d day.Date) bool {
@@ -172,8 +148,6 @@ func isWeekday(d day.Date) bool {
 	return wd >= 1 && wd <= 5
 }
 
-// Generate writes SEC-format archives into dir/sec, a matching factor table
-// and the answer key into dir, and returns the answer key.
 func Generate(cfg Config, dir string) (*Truth, error) {
 	g := &gen{cfg: cfg, rng: rand.New(rand.NewSource(cfg.Seed)), dayIdx: map[day.Date]int{},
 		reports: map[[3]int]float64{}}
@@ -211,7 +185,6 @@ func Generate(cfg Config, dir string) (*Truth, error) {
 	return &g.truth, nil
 }
 
-// lastIndexOnOrBefore maps a calendar date onto the weekday grid.
 func (g *gen) at(d day.Date) int {
 	for i := 0; i < 7; i++ {
 		if k, ok := g.dayIdx[d.AddDays(-i)]; ok {
@@ -221,8 +194,6 @@ func (g *gen) at(d day.Date) int {
 	return 0
 }
 
-// makeFactors builds a public credit spread with two stress episodes. It is a
-// plausible driver, not a model of any actual period.
 func (g *gen) makeFactors() {
 	n := len(g.days)
 	g.baa = make([]float64, n)
@@ -282,10 +253,6 @@ func (g *gen) makeBorrowers() {
 				dv := -beta * (g.baa[i] - g.baa[i-1])
 				dv += (1 + 5*gap) * shock[i]
 				dv += (0.0004 + 0.012*gap) * g.rng.NormFloat64()
-				// A performing loan below par is pulled back to it, about a
-				// seventh of the way each quarter, as real marks are. A loan
-				// under stress is not: in the real schedules it is as likely
-				// to fall further as to recover.
 				if v >= 0.97 && v < 0.992 {
 					dv += 0.0024 * (0.992 - v)
 				}
@@ -372,8 +339,6 @@ func (g *gen) assignHoldings() {
 		for tries := 0; len(chosen) < k && tries < 60; tries++ {
 			chosen[pick()] = true
 		}
-		// Iterate in a fixed order: map order would make the output depend on
-		// the runtime rather than the seed.
 		fis := make([]int, 0, len(chosen))
 		for fi := range chosen {
 			fis = append(fis, fi)
@@ -407,19 +372,12 @@ func (g *gen) assignHoldings() {
 	}
 }
 
-// The measurement structure of the generated universe, set to what the real
-// schedules show: the share of a lender's distance from fair value that
-// carries to the next quarter, the share of its variance that is fresh each
-// quarter, and the price below which lenders smooth.
 const (
 	distCarry   = 0.8
 	distWobble  = 0.13
 	smoothBelow = 0.97
 )
 
-// mark returns what a family reports for a borrower and class at quarter q,
-// applying its bias, noise and smoothing. The result is memoised: every fund
-// in a family, and every later comparative column, repeats the same number.
 func (g *gen) mark(fi, bi, class, q int) float64 {
 	key := [3]int{fi, bi, class*1000 + q}
 	if m, ok := g.reports[key]; ok {
@@ -432,10 +390,6 @@ func (g *gen) mark(fi, bi, class, q int) float64 {
 	}
 	v := path[g.at(g.qEnds[q])]
 	scale := 1 + 8*math.Max(0, 1-v)
-	// How lenders mark, as the real schedules show it. A lender's distance
-	// from fair value on a loan is mostly a standing view: four fifths of it
-	// is still there a quarter later. About an eighth of the variance is
-	// wobble, fresh each quarter.
 	k := [2]int{bi, class}
 	d, held := f.dist[k]
 	if held {
@@ -447,9 +401,6 @@ func (g *gen) mark(fi, bi, class, q int) float64 {
 	away := math.Sqrt(1-distWobble)*d + math.Sqrt(distWobble)*g.rng.NormFloat64()
 	target := v + f.bias + f.noise*scale*away
 	m := target
-	// And a lender is slow about news: when a change starts or ends below
-	// the reference price it closes only part of the way to its new view.
-	// The small changes of a performing loan it marks without delay.
 	if prev, ok := f.last[k]; ok && (prev < smoothBelow || target < smoothBelow) {
 		m = f.theta*target + (1-f.theta)*prev
 	}
@@ -474,7 +425,7 @@ func lienText(class int, style int, rng *rand.Rand) string {
 
 func typeAxis(class int, mode int) string {
 	if mode == 2 {
-		return "" // this house leaves the type axis empty
+		return ""
 	}
 	if class == 1 {
 		if mode == 0 {
@@ -548,14 +499,11 @@ func (r *row) line() string {
 		"https://example.invalid/synthetic/" + r.adsh, "2",
 		r.sector, r.ident, r.affil, r.typ,
 		num(r.rate, r.hasRate, 4), num(r.spread, r.hasRate, 4), mat,
-		// As in the SEC's files: the documented cost and fair value columns
-		// are present and empty, and the values follow under other labels.
 		num(r.principal, r.hasPrincipal, 0), "", "",
 		"", num(r.cost, true, 0), num(r.fv, true, 0),
 	}, "\t")
 }
 
-// rowsFor builds the schedule a fund reports as of quarter q.
 func (g *gen) rowsFor(fi int, fd *fund, q int) []row {
 	f := g.fams[fi]
 	var out []row
@@ -589,8 +537,6 @@ func (g *gen) rowsFor(fi int, fd *fund, q int) []row {
 			})
 		}
 		if b.foreign {
-			// A euro loan: principal in euros, fair value in dollars. The
-			// ratio is not a price and the row must be filtered.
 			out = append(out, row{sector: sector, ident: f.spell[bi] + ", First lien senior secured loan, EUR, EURIBOR + 6.00%",
 				typ: typeAxis(0, f.types), rate: 0.095, spread: 0.06, hasRate: true, maturity: b.maturity,
 				principal: principal, hasPrincipal: true, cost: math.Round(principal * 1.08), fv: math.Round(principal * 1.07)})
@@ -641,7 +587,6 @@ func (g *gen) writeArchives(dir string) error {
 					}
 				}
 				emit(qe, g.rowsFor(fi, fd, q))
-				// Every filing repeats the last fiscal year end as a comparative.
 				for p := q - 1; p >= 0; p-- {
 					if g.qEnds[p].Month() == f.fye {
 						emit(g.qEnds[p], g.rowsFor(fi, fd, p))
@@ -715,8 +660,6 @@ func (g *gen) writeFactors(path string) error {
 	return f.Close()
 }
 
-// writeTruth stores the answer key: the true month-end price of every
-// borrower's debt, and the parameters each family marks with.
 func (g *gen) writeTruth(dir string) error {
 	f, err := os.Create(filepath.Join(dir, "truth_prices.tsv"))
 	if err != nil {

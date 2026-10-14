@@ -1,16 +1,7 @@
-//! Loads the panel the ingest step writes and reshapes it for inference.
-//!
-//! Two reshapings matter. Dates become positions on a daily grid, so the
-//! filter can step through time with array indices. And marks from vehicles
-//! that share a manager collapse into one observation per manager family: a
-//! shared loan is valued once by one committee, and counting each vehicle
-//! separately would treat one opinion as several.
-
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
-/// A parsed tab-separated table with named columns.
 pub struct Table {
     cols: HashMap<String, usize>,
     rows: Vec<Vec<String>>,
@@ -53,7 +44,6 @@ impl Table {
         self.rows[row].get(col).map(|s| s.as_str()).unwrap_or("")
     }
 
-    /// Numeric cell; an empty or malformed cell is NaN.
     pub fn num(&self, row: usize, col: usize) -> f64 {
         self.str(row, col).trim().parse().unwrap_or(f64::NAN)
     }
@@ -63,7 +53,6 @@ impl Table {
     }
 }
 
-/// Seniority bucket marks are compared within.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Class {
     Senior,
@@ -103,47 +92,34 @@ pub struct Borrower {
 pub struct Instrument {
     pub borrower: usize,
     pub class: Class,
-    /// Which of the loans found under one borrower and class this is: zero
-    /// for the first, and for the only one.
     pub piece: usize,
 }
 
-/// One manager family's valuation of one instrument on one reporting date.
 #[derive(Clone, Debug)]
 pub struct Obs {
     pub inst: usize,
     pub family: usize,
-    /// Reporting date, yyyymmdd.
     pub asof: i32,
-    /// Months since year zero; consecutive quarters differ by exactly 3.
     pub ym: i32,
-    /// Position of the reporting date on the daily grid.
     pub asof_idx: usize,
-    /// Position of the day the mark became public.
     pub filed_idx: usize,
-    /// Fair value over principal; 1.0 is par.
     pub price: f64,
     pub principal: f64,
     pub spread_bp: f64,
-    /// True when the filing date is the mark's first public release.
     pub original: bool,
 }
 
 pub struct Panel {
-    /// "sec" for real filings, "synthetic" for the generated test universe.
     pub source: String,
     pub days: Vec<i32>,
     pub factor_names: Vec<String>,
-    /// factors[k][t]: series k on day t. Gaps are NaN.
     pub factors: Vec<Vec<f64>>,
     pub families: Vec<String>,
     pub sectors: Vec<String>,
     pub holders: Vec<Holder>,
     pub borrowers: Vec<Borrower>,
     pub instruments: Vec<Instrument>,
-    /// Family-level observations, sorted by instrument, reporting date, family.
     pub obs: Vec<Obs>,
-    /// Half-open ranges into `obs`, one per instrument.
     pub inst_obs: Vec<(usize, usize)>,
 }
 
@@ -151,12 +127,10 @@ pub fn year_month(d: i32) -> i32 {
     (d / 10000) * 12 + (d / 100 % 100) - 1
 }
 
-/// True for reporting dates on the calendar quarter cycle.
 pub fn is_calendar_quarter(d: i32) -> bool {
     matches!(d / 100 % 100, 3 | 6 | 9 | 12)
 }
 
-/// Converts yyyymmdd to a day count, for date differences.
 pub fn serial(d: i32) -> i64 {
     let (y, m, dd) = ((d / 10000) as i64, (d / 100 % 100) as i64, (d % 100) as i64);
     let (y, m) = if m <= 2 { (y - 1, m + 12) } else { (y, m) };
@@ -164,7 +138,6 @@ pub fn serial(d: i32) -> i64 {
 }
 
 impl Panel {
-    /// Last grid position on or before `date`, clamped to the grid.
     pub fn day_index(&self, date: i32) -> usize {
         match self.days.binary_search(&date) {
             Ok(i) => i,
@@ -189,7 +162,6 @@ impl Panel {
             })
             .unwrap_or_else(|| "unknown".to_string());
 
-        // Factors define the daily grid.
         let ft = Table::read(&dir.join("factors.tsv"))?;
         let dcol = ft.col("date")?;
         let mut names: Vec<(String, usize)> =
@@ -268,7 +240,6 @@ impl Panel {
             inst_obs: Vec::new(),
         };
 
-        // Collapse vehicles of one family into one observation.
         struct Acc {
             principal: f64,
             fv: f64,
@@ -363,7 +334,7 @@ mod tests {
 
     #[test]
     fn serial_counts_days() {
-        assert_eq!(serial(20240301) - serial(20240228), 2); // leap year
+        assert_eq!(serial(20240301) - serial(20240228), 2);
         assert_eq!(serial(20230301) - serial(20230228), 1);
         assert_eq!(serial(20260101) - serial(20250101), 365);
     }

@@ -1,17 +1,3 @@
-// Package soi streams the Schedule of Investments report out of an SEC BDC
-// data set archive.
-//
-// The SOI report is a pivot the SEC rebuilds for every release: a fixed set of
-// metadata, axis and value columns comes first, then any number of extra
-// columns whose presence and order change between updates. Columns are
-// therefore located by name, never by position, and unknown ones are ignored.
-//
-// The published files do not quite match the published schema. The columns
-// the readme calls "Investment Owned, Fair Value" and "Investment Owned, Cost"
-// exist and are empty in every release from 2022 to 2026; the values sit
-// under "Initial fair value of Investment" and "Adjusted cost basis", labels
-// the pivot evidently took from one filer. Each value is therefore read from
-// the first of several candidate columns that has something in it.
 package soi
 
 import (
@@ -25,35 +11,27 @@ import (
 	"syndicate/ingest/internal/day"
 )
 
-// Row is one holding as a registrant reported it.
 type Row struct {
 	Adsh   string
 	CIK    string
 	Holder string
 	Form   string
-	AsOf   day.Date // ddate: the date the values are measured at
-	Filed  day.Date // when the filing reached EDGAR
-	Period day.Date // balance sheet date of the filing that carried the row
+	AsOf   day.Date
+	Filed  day.Date
+	Period day.Date
 
 	Sector      string
 	Identifier  string
 	Affiliation string
 	Type        string
-	// Issuer is the borrower as a separate axis, which some filers populate
-	// in place of, or alongside, a name inside the identifier.
-	Issuer string
-	// Entity is set when the holding belongs to a subsidiary or joint
-	// venture reported inside the filing, not to the registrant itself.
-	Entity   string
-	Currency string
-	// RateType is the reference rate the loan floats on, as a taxonomy
-	// member such as "...#SecuredOvernightFinancingRateSofrMember".
-	RateType string
-	// Shares is set for equity positions.
-	Shares float64
+	Issuer      string
+	Entity      string
+	Currency    string
+	RateType    string
+	Shares      float64
 
-	Rate      float64 // all-in interest rate, as a fraction
-	Spread    float64 // margin over the reference rate, as a fraction
+	Rate      float64
+	Spread    float64
 	Maturity  day.Date
 	Principal float64
 	Cost      float64
@@ -62,18 +40,14 @@ type Row struct {
 	HasRate, HasSpread, HasPrincipal, HasCost, HasFairValue bool
 }
 
-// columns holds the position of each field in one file's header, or -1.
 type columns struct {
 	adsh, cik, name, form, ddate, filed, period int
 	sector, ident, affil, typ                   int
 	issuer, entity, currency, shares, rateType  int
 	rate, spread, maturity, principal           int
-	// Candidate columns for each value, in order of preference.
-	cost, fair []int
+	cost, fair                                  []int
 }
 
-// squash reduces a header to its letters so that "Investment Owned, Fair
-// Value" and "investmentownedfairvalue" compare equal.
 func squash(s string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(s) {
@@ -159,7 +133,6 @@ func field(parts []string, i int) string {
 	return strings.TrimSpace(parts[i])
 }
 
-// firstNumber reads a value from the first candidate column that holds one.
 func firstNumber(parts []string, candidates []int) (float64, bool) {
 	for _, i := range candidates {
 		if v, ok := number(parts, i); ok {
@@ -181,29 +154,23 @@ func number(parts []string, i int) (float64, bool) {
 	return v, true
 }
 
-// Stats counts what a read pass saw.
 type Stats struct {
 	Lines   int
 	Rows    int
-	Skipped int // lines too short to hold the required columns
+	Skipped int
 }
 
-// Read parses a soi.tsv stream and calls fn for every row. Returning an error
-// from fn stops the read.
 func Read(r io.Reader, fn func(*Row) error) (Stats, error) {
 	var st Stats
 	br := bufio.NewReaderSize(r, 1<<20)
 
 	line, err := readLine(br)
 	if err == io.EOF && strings.TrimSpace(line) == "" {
-		// A month in which no BDC filed a schedule is published as an empty
-		// report. That is a month with nothing in it, not a broken archive.
 		return st, nil
 	}
 	if err != nil && err != io.EOF {
 		return st, fmt.Errorf("reading soi header: %w", err)
 	}
-	// A UTF-8 byte order mark would otherwise glue itself to the first name.
 	line = strings.TrimPrefix(line, "\xef\xbb\xbf")
 	cols, err := locate(strings.Split(line, "\t"))
 	if err != nil {
@@ -260,7 +227,6 @@ func Read(r io.Reader, fn func(*Row) error) (Stats, error) {
 	return st, nil
 }
 
-// readLine returns one line without its terminator, however long it is.
 func readLine(br *bufio.Reader) (string, error) {
 	var sb strings.Builder
 	for {
@@ -275,8 +241,6 @@ func readLine(br *bufio.Reader) (string, error) {
 	}
 }
 
-// ReadZip finds the SOI report inside a BDC data set archive and streams it.
-// The archive is never unpacked to disk.
 func ReadZip(path string, fn func(*Row) error) (Stats, error) {
 	zr, err := zip.OpenReader(path)
 	if err != nil {

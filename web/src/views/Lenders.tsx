@@ -31,7 +31,6 @@ function value(f: Family, c: Column): number | string {
   }
 }
 
-/** A thin bar inside a table cell, growing from the left or from a centre line. */
 function Meter({ share, centred = false, color = INFERRED }: { share: number; centred?: boolean; color?: string }) {
   const w = 84;
   const x = centred ? w / 2 + Math.min(0, share) * (w / 2) : 0;

@@ -33,7 +33,6 @@ function Ladder({ rungs }: { rungs: Rung[] }) {
   );
 }
 
-/** Which way next quarter's average mark leans between this quarter's extremes. */
 function leaning(pull: { toward_low: number; toward_high: number }): string {
   const { toward_low: low, toward_high: high } = pull;
   if (low > 0.05 && low > high + 0.03) {
@@ -45,7 +44,6 @@ function leaning(pull: { toward_low: number; toward_high: number }): string {
   return "Next quarter's average moves toward neither extreme: neither the most cautious lender nor the most generous one is early.";
 }
 
-/** The ladder in a sentence or two, whatever it shows. */
 function reading(rungs: Rung[]): string {
   const [, raw, habits, peers, sector] = rungs.map((r) => r.skill);
   const pct = (x: number) => `${Math.abs(x * 100).toFixed(0)}%`;

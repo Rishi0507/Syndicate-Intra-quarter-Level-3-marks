@@ -1,8 +1,3 @@
-// The kernel, compiled to WebAssembly.
-//
-// Its interface is plain C functions over linear memory: allocate a buffer of
-// doubles, write, call, read. This module hides the pointers and nothing else.
-
 interface Exports {
   memory: WebAssembly.Memory;
   px_alloc(len: number): number;
@@ -34,15 +29,10 @@ interface Exports {
 }
 
 export interface Desk {
-  /** Requests for quotes per day, each side, that a zero spread would win. */
   arrival: number;
-  /** Fall-off of the win rate per point of half-spread. */
   decay: number;
-  /** Risk aversion per point of profit and loss. */
   gamma: number;
-  /** Share of clients who know the value. */
   informed: number;
-  /** Position in clips; positive is long. */
   inventory: number;
 }
 
@@ -96,33 +86,21 @@ export interface Census {
 }
 
 export interface Curve {
-  /** Real-time estimate and its standard deviation, as fractions of par. */
   mean: Float64Array;
   sd: Float64Array;
-  /** The same with every mark ever filed in hand. */
   hindMean: Float64Array;
   hindSd: Float64Array;
-  /** Six per mark: public mean, sd, syndicate mean, sd, marks already seen, late flag. */
   forecasts: Float64Array;
 }
 
-/**
- * Floats per mark, as the kernel reads them: year-month, reporting day,
- * filing day, price, the lender's previous price, what that previous mark
- * implied about fair value, then the lender's smoothing, bias, distance and
- * carry, and its number.
- */
 export const MARK_LEN = 11;
 
 export interface CurveInput {
   dynamics: number[];
   shocks: Float64Array;
   quarters: ArrayLike<number>;
-  /** Eight per mark. */
   marks: ArrayLike<number>;
-  /** Four per entry. */
   sector: ArrayLike<number>;
-  /** Three per print. */
   prints: ArrayLike<number>;
   start: number;
   end: number;
@@ -150,14 +128,11 @@ export class Kernel {
     return new Kernel(instance.exports as unknown as Exports);
   }
 
-  /** Same, from bytes already in hand. Used outside the browser. */
   static async fromBytes(bytes: BufferSource): Promise<Kernel> {
     const { instance } = await WebAssembly.instantiate(bytes, {});
     return new Kernel(instance.exports as unknown as Exports);
   }
 
-  // A view must be taken after every allocation: growing the memory detaches
-  // earlier ones.
   private view(ptr: number, len: number): Float64Array {
     return new Float64Array(this.x.memory.buffer, ptr, len);
   }
@@ -223,7 +198,6 @@ export class Kernel {
     );
   }
 
-  /** Daily variance of value at price `v` (a fraction of par), jumps included. */
   dailyVar(dynamics: number[], v: number, daysPerQuarter: number): number {
     const [ptr, n] = this.put(dynamics);
     try {
@@ -276,7 +250,6 @@ export class Kernel {
     );
   }
 
-  /** For each standard error, the arrival rate at which it is a rest point. */
   manifold(market: Market, sds: ArrayLike<number>): Float64Array {
     return this.with(
       [marketRow(market), sds],

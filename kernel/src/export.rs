@@ -1,11 +1,3 @@
-//! Writes everything the interface needs as static files.
-//!
-//! The interface has no server. It loads these files and calls the kernel,
-//! compiled to WebAssembly, for anything interactive. Per-loan daily curves
-//! are not exported: there are too many. The marks and the sector's batches
-//! are, and from those the browser recomputes any loan's curve exactly as
-//! this program would.
-
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -18,13 +10,9 @@ use crate::insight;
 use crate::json::Json;
 use crate::truth;
 
-/// Grid days between samples of the compressed per-loan path.
 pub const PATH_STEP: usize = 5;
-/// Grid days a loan is kept alive after its last reporting date: one quarter
-/// for the next mark to be due and time for its absence to be filed.
 pub const AFTERLIFE: usize = 126;
 
-/// Price range and standard error range the one-byte path codes span.
 pub const PRICE_LO: f64 = 0.30;
 pub const PRICE_HI: f64 = 1.05;
 pub const SD_HI_POINTS: f64 = 6.0;
@@ -33,7 +21,6 @@ fn price_code(v: f64) -> u8 {
     (((v - PRICE_LO) / (PRICE_HI - PRICE_LO)).clamp(0.0, 1.0) * 255.0).round() as u8
 }
 
-/// Square-root scale, so the small errors of performing loans keep resolution.
 fn sd_code(sd: f64) -> u8 {
     ((sd * 100.0 / SD_HI_POINTS).clamp(0.0, 1.0).sqrt() * 255.0).round() as u8
 }
@@ -57,7 +44,6 @@ fn fit_json(fit: &Fit) -> Json {
         .with("phi_bar", Json::round(fit.phi_bar, 4))
         .with("phi_stressed", Json::round(d.phi_stressed, 4))
         .with("phi_entering", Json::round(d.phi_entering, 4))
-        // The filter needs this at full precision.
         .with("carry", fit.carry)
         .with("n_lead_lag", d.n_lead_lag)
         .with("n_carry", d.n_carry)
@@ -90,9 +76,6 @@ pub struct Summary {
     pub bytes: usize,
 }
 
-/// Fits, backtests and runs the model over the panel in `build`, then writes
-/// the interface's data files to `out`. `min_train` is the number of quarters
-/// held back before the first out-of-sample forecast.
 pub fn export(build: &Path, out: &Path, factor: &str, min_train: usize, log: &mut dyn FnMut(&str)) -> Result<Summary, String> {
     let panel = Panel::load(build)?;
     let level = panel.factor(factor).ok_or_else(|| format!("factors.tsv has no {factor} column"))?.to_vec();
@@ -123,7 +106,6 @@ pub fn export(build: &Path, out: &Path, factor: &str, min_train: usize, log: &mu
         None
     };
 
-    // Borrowers more than one manager lends to.
     let mut lenders_of: Vec<Vec<usize>> = vec![Vec::new(); panel.borrowers.len()];
     for o in &panel.obs {
         let b = panel.instruments[o.inst].borrower;
@@ -133,7 +115,6 @@ pub fn export(build: &Path, out: &Path, factor: &str, min_train: usize, log: &mu
     }
     let shared = lenders_of.iter().filter(|l| l.len() >= 2).count();
 
-    // ---- Per-loan columns and binary tables -------------------------------
     let latest_ym = panel.obs.iter().map(|o| o.ym).max().unwrap_or(0);
     let run_of: HashMap<usize, usize> = runs.iter().enumerate().map(|(i, r)| (r.inst, i)).collect();
 
@@ -148,7 +129,6 @@ pub fn export(build: &Path, out: &Path, factor: &str, min_train: usize, log: &mu
     let mut path: Vec<u8> = Vec::new();
     let mut n_marks = 0usize;
 
-    // Universe-wide daily series: marks arriving, and mean uncertainty.
     let mut arrivals = vec![0u32; panel.days.len()];
     let mut sd_sum = vec![0.0f64; panel.days.len()];
     let mut sd_n = vec![0u32; panel.days.len()];
@@ -158,7 +138,6 @@ pub fn export(build: &Path, out: &Path, factor: &str, min_train: usize, log: &mu
     for inst in 0..n {
         let ins = &panel.instruments[inst];
         let b = &panel.borrowers[ins.borrower];
-        // A second loan under the same borrower and class is told apart.
         name.push(if ins.piece > 0 { Json::from(format!("{} (loan {})", b.name, ins.piece + 1)) } else { Json::from(b.name.as_str()) });
         sector.push(Json::from(b.sector));
         class.push(Json::from(ins.class as usize));
@@ -185,8 +164,6 @@ pub fn export(build: &Path, out: &Path, factor: &str, min_train: usize, log: &mu
         let mut distinct: Vec<usize> = obs.iter().map(|o| o.family).collect();
         distinct.sort_unstable();
         distinct.dedup();
-        // What lenders hold, from the date on which they reported most. The
-        // latest date is often incomplete, with filings still to arrive.
         let mut by_date: HashMap<i32, f64> = HashMap::new();
         for o in obs.iter() {
             *by_date.entry(o.ym).or_default() += o.principal;
@@ -210,9 +187,6 @@ pub fn export(build: &Path, out: &Path, factor: &str, min_train: usize, log: &mu
         for (k, m) in r.marks.iter().enumerate() {
             let arrival = m.filed_idx.max(m.asof_idx + 1).min(grid_end);
             marks_i.extend([r.families[k] as u16, m.asof_idx as u16, arrival as u16]);
-            // What this mark told the sector, if it was the loan's first of
-            // its quarter. The browser needs it to leave the loan out of its
-            // own sector feed.
             let week = arrival / BATCH_DAYS;
             let said = r.said.iter().find(|s| s.0 == m.ym && s.1 == week);
             let first_of_ym = !r.marks.iter().enumerate().any(|(j, e)| {
@@ -256,7 +230,6 @@ pub fn export(build: &Path, out: &Path, factor: &str, min_train: usize, log: &mu
         .with("mark_start", mark_start)
         .with("path_start", path_start);
 
-    // ---- Meta -------------------------------------------------------------
     let (filled, _) = calib::shocks_from(&level);
     let families = panel
         .families
@@ -273,7 +246,6 @@ pub fn export(build: &Path, out: &Path, factor: &str, min_train: usize, log: &mu
                 .with("overlap", f.n_overlap)
                 .with("marks", family_marks[i])
                 .with("live", family_live[i])
-                // The filter needs these at full precision.
                 .with("fit", Json::Arr(vec![Json::from(f.phi), Json::from(f.bias), Json::from(f.noise)]))
         })
         .collect::<Vec<_>>();
@@ -365,13 +337,8 @@ pub fn export(build: &Path, out: &Path, factor: &str, min_train: usize, log: &mu
         .with("truth", truth_json)
         .with("insight", insight::report(&panel));
 
-    // A few loans' daily paths at full precision, written beside the panel
-    // rather than with the site. A script recomputes them through the
-    // WebAssembly module and compares.
     {
         let mut order: Vec<usize> = (0..runs.len()).collect();
-        // The most heavily marked loans exercise the most code: several
-        // lenders, sector feed, smoothing.
         order.sort_by_key(|&i| std::cmp::Reverse((runs[i].marks.len(), runs[i].inst)));
         let reference = Json::Arr(
             order
@@ -420,7 +387,6 @@ mod tests {
         assert_eq!(price_code(2.0), 255);
         assert_eq!(sd_code(0.0), 0);
         assert_eq!(sd_code(SD_HI_POINTS / 100.0), 255);
-        // The square-root scale gives small errors most of the codes.
         assert!(sd_code(0.003) > 50);
     }
 

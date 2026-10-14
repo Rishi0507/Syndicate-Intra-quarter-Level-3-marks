@@ -21,9 +21,6 @@ func TestNormaliseSpread(t *testing.T) {
 	}
 }
 
-// TestSyntheticUniverse runs the whole pipeline over a generated universe and
-// checks it against the answer key: every borrower recovered, no two distinct
-// borrowers merged, and every non-loan row filtered out.
 func TestSyntheticUniverse(t *testing.T) {
 	dir := t.TempDir()
 	cfg := synth.Default()
@@ -43,13 +40,11 @@ func TestSyntheticUniverse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Pairwise entity resolution quality. Re-read the rows the same way Build
-	// does so each parsed borrower name can be tied back to its true identity.
 	byName := map[string]int{}
 	for _, b := range p.Borrowers {
 		byName[b.Key] = b.ID
 	}
-	trueOf := map[string]map[int]bool{} // resolved core key -> true borrowers behind it
+	trueOf := map[string]map[int]bool{}
 	for _, a := range archives {
 		if _, err := soi.ReadZip(a, func(r *soi.Row) error {
 			bi, ok := truth.Entity[r.CIK+"|"+r.Identifier]
@@ -67,7 +62,6 @@ func TestSyntheticUniverse(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// Every parsed name must reduce to exactly the true borrower's core key.
 	wrong := 0
 	for k, set := range trueOf {
 		for bi := range set {
@@ -83,7 +77,6 @@ func TestSyntheticUniverse(t *testing.T) {
 		t.Fatalf("%d parsed names did not reduce to their true core key", wrong)
 	}
 
-	// With names correct, clusters must be one-to-one with true borrowers.
 	seen := map[string]bool{}
 	for _, b := range p.Borrowers {
 		if seen[b.Key] {
@@ -99,7 +92,6 @@ func TestSyntheticUniverse(t *testing.T) {
 		t.Errorf("resolved %d borrowers, answer key has %d", len(seen), len(want))
 	}
 
-	// Nothing that is not a dollar loan with a principal survives.
 	for _, m := range p.Marks {
 		if m.Principal <= 0 || m.Price < minPrice || m.Price > maxPrice || math.IsNaN(m.Price) {
 			t.Fatalf("bad mark survived: %+v", m)
@@ -124,8 +116,6 @@ func TestSyntheticUniverse(t *testing.T) {
 		t.Errorf("found %d manager families, want %d", r.Families, cfg.Families)
 	}
 
-	// Funds in one family report identical marks; that is what makes them one
-	// observation rather than several.
 	type k struct{ inst, asof int }
 	byFam := map[k]map[string]float64{}
 	for _, m := range p.Marks {

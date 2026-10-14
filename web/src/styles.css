@@ -1,15 +1,3 @@
-/*
-  The page is a sheet of security paper under glass. The ground carries a
-  fine engraved rosette, as a banknote or a share certificate does. Panes of
-  frosted glass sit on it, and everything on them is set in one grotesque,
-  with figures in tabular numerals.
-
-  Three colours carry meaning and nothing else is coloured:
-    ink    what a lender reported
-    gilt   what the model infers
-    red    how far below par a loan is
-*/
-
 :root {
   --font: "Archivo Variable", "Helvetica Neue", Arial, sans-serif;
   --serif: "Newsreader Variable", Georgia, serif;
@@ -29,7 +17,6 @@
   --radius-chip: 999px;
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
 
-  /* Light: bond paper. */
   --bg: #e7ebe5;
   --wash-a: #dfe8dc;
   --wash-b: #efe7cf;
@@ -70,7 +57,6 @@
 }
 
 :root[data-theme="dark"] {
-  /* Dark: the engraver's plate. */
   --bg: #0c1310;
   --wash-a: #13201a;
   --wash-b: #1d1a0f;
@@ -138,7 +124,6 @@ figure {
   margin: 0;
 }
 figure {
-  /* A chart may shrink with its column rather than push it wider. */
   min-width: 0;
 }
 button,
@@ -162,8 +147,6 @@ a {
   text-align: right;
 }
 
-/* ---- Ground ------------------------------------------------------------ */
-
 .ground {
   position: fixed;
   inset: 0;
@@ -186,14 +169,11 @@ a {
   vector-effect: non-scaling-stroke;
 }
 
-/* ---- Shell and navigation ---------------------------------------------- */
-
 .shell {
   position: relative;
   z-index: 1;
   height: 100%;
   display: grid;
-  /* A zero minimum, or a wide child would stretch the page past the screen. */
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
 }
@@ -220,7 +200,6 @@ a {
   display: flex;
   align-items: center;
   gap: 10px;
-  /* The bar and the page below it share their edges. */
   width: min(1240px, calc(100% - 2 * var(--gutter)));
   margin: var(--gutter) auto 0;
   padding: 8px 10px 8px 16px;
@@ -338,8 +317,6 @@ a {
   background: var(--hover-1);
 }
 
-/* ---- Views and their transitions --------------------------------------- */
-
 .view {
   position: relative;
   min-height: 0;
@@ -436,8 +413,6 @@ h3 {
   position: relative;
   z-index: 1;
 }
-
-/* ---- Small parts ------------------------------------------------------- */
 
 .stats {
   display: grid;
@@ -576,8 +551,6 @@ tr:last-child td {
   border-bottom: 0;
 }
 
-/* ---- Charts ------------------------------------------------------------ */
-
 .chart {
   position: relative;
   width: 100%;
@@ -663,8 +636,6 @@ tr:last-child td {
   height: 10px;
   border-radius: 3px;
 }
-
-/* ---- The market page --------------------------------------------------- */
 
 .lead {
   display: grid;
@@ -840,7 +811,6 @@ tr:last-child td {
   text-align: right;
 }
 
-/* The loan sheet. */
 .loan {
   padding: clamp(16px, 2vw, 24px);
   display: grid;
@@ -958,7 +928,6 @@ tr:last-child td {
   border-radius: 3px;
 }
 
-/* The map. */
 .map-head {
   display: flex;
   justify-content: space-between;
@@ -994,8 +963,6 @@ tr:last-child td {
   height: 100%;
   cursor: pointer;
 }
-
-/* ---- Prose (the method page) ------------------------------------------- */
 
 .prose {
   font-family: var(--serif);
@@ -1041,8 +1008,6 @@ blockquote cite {
   color: var(--ink-3);
   max-width: 70ch;
 }
-
-/* ---- Narrow screens ---------------------------------------------------- */
 
 @media (max-width: 1040px) {
   .lead {

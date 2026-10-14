@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Runs every test in the repository.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

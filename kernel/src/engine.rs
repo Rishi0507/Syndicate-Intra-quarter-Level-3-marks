@@ -1,41 +1,19 @@
-//! Runs the model across the whole universe and scores it out of sample.
-//!
-//! Loans are filtered independently, which is what makes the universe
-//! tractable, but they are not independent: a sector that reprices shows up
-//! in every loan in it. The engine restores that link with two sweeps. The
-//! first filters each loan alone and records how much its marks surprised a
-//! forecast built from public markets. The second filters again, feeding each
-//! loan the surprises of the other loans in its sector as they were filed.
-
 use std::collections::HashMap;
 
 use crate::calib::{self, Fit};
 use crate::data::{is_calendar_quarter, year_month, Obs, Panel};
 use crate::filter::{self, Forecast, MarkIn, Point, Run, SectorIn};
 
-/// Which parts of the model a run uses. Turning parts off is how the
-/// contribution of each is measured.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Variant {
-    /// Model how each lender marks: its smoothing, and the share of its
-    /// disagreement it carries from quarter to quarter. Otherwise marks are
-    /// taken at face value and disagreement as fresh noise.
     pub habits: bool,
-    /// Pass sector surprises between loans.
     pub sector: bool,
 }
 
 pub const FULL: Variant = Variant { habits: true, sector: true };
 
-/// Sector surprises are released in weekly batches. Batches from different
-/// weeks are independent readings of the same shock, so each can be fed to
-/// the filter as its own observation without double counting.
 pub const BATCH_DAYS: usize = 5;
-/// Fewer peers than this say too little about a sector to be worth using.
 pub const MIN_PEERS: usize = 8;
-/// A surprise is clamped to this many of its own standard deviations before
-/// it is averaged. One default is news about one borrower, and must not be
-/// read as news about its sector.
 const CLAMP_SD: f64 = 2.5;
 
 struct Surprise {
@@ -44,43 +22,31 @@ struct Surprise {
     value: f64,
 }
 
-/// The forecasts for one loan, with the marks they refer to.
 pub struct LoanRun {
     pub inst: usize,
-    /// First grid day of the run.
     pub start: usize,
     pub marks: Vec<MarkIn>,
     pub families: Vec<usize>,
     pub forecasts: Vec<Forecast>,
-    /// What the loan heard from its sector.
     pub feed: Vec<SectorIn>,
-    /// What the loan told its sector: per quarter, the week its first mark
-    /// was filed, its weight, and weight times surprise. Subtracting these
-    /// from the sector's batch gives the feed above.
     pub said: Vec<(i32, usize, f64, f64)>,
-    /// The real-time estimate at the close of each day from `start`, when
-    /// the run was asked to keep it.
     pub path: Vec<Point>,
 }
 
-/// One week of one sector's surprises about one quarter, pooled.
 #[derive(Clone, Copy, Debug)]
 pub struct Batch {
     pub sector: usize,
     pub ym: i32,
-    /// Grid day divided by `BATCH_DAYS`.
     pub week: usize,
     pub weight: f64,
     pub weighted_sum: f64,
     pub n: usize,
-    /// Factor by which the batch's variance is widened for excess scatter.
     pub inflate: f64,
 }
 
 pub struct Engine<'a> {
     pub panel: &'a Panel,
     pub shocks: Vec<f64>,
-    /// Calendar quarter ends on the grid, as (day, year-month).
     pub quarters: Vec<(usize, i32)>,
 }
 
@@ -90,7 +56,6 @@ impl<'a> Engine<'a> {
         let mut quarters = Vec::new();
         for (t, &d) in panel.days.iter().enumerate() {
             let last_of_month = t + 1 == panel.days.len() || panel.days[t + 1] / 100 != d / 100;
-            // The final grid day is only a quarter end if the month is over.
             let complete = t + 1 < panel.days.len();
             if last_of_month && complete && is_calendar_quarter(d) {
                 quarters.push((t, year_month(d)));
@@ -99,8 +64,6 @@ impl<'a> Engine<'a> {
         Engine { panel, shocks, quarters }
     }
 
-    /// Filters the loans in `insts` using marks `keep` accepts, through grid
-    /// day `end`. With `paths` set, each loan's daily estimate is kept.
     pub fn run(
         &self,
         fit: &Fit,
@@ -113,7 +76,6 @@ impl<'a> Engine<'a> {
         self.run_with_book(fit, variant, insts, keep, end, paths).0
     }
 
-    /// As `run`, also returning every sector batch that was formed.
     pub fn run_with_book(
         &self,
         fit: &Fit,
@@ -168,8 +130,6 @@ impl<'a> Engine<'a> {
             return (runs, Vec::new());
         }
 
-        // First sweep done. Gather each loan's first surprise per quarter,
-        // bucketed by sector, quarter and the week it was filed.
         let mut batches: HashMap<(usize, i32, usize), Vec<Surprise>> = HashMap::new();
         for r in &runs {
             let sector = self.panel.borrowers[self.panel.instruments[r.inst].borrower].sector;
@@ -183,7 +143,6 @@ impl<'a> Engine<'a> {
                 if !matches!(m.ym.rem_euclid(12), 2 | 5 | 8 | 11) {
                     continue;
                 }
-                // The part of the surprise variance that is not the sector's.
                 let own = (f.surprise_var - f.sector_var).max(1e-10);
                 let limit = CLAMP_SD * f.surprise_var.max(1e-10).sqrt();
                 batches.entry((sector, m.ym, f.arrival / BATCH_DAYS)).or_default().push(Surprise {
@@ -198,9 +157,6 @@ impl<'a> Engine<'a> {
         for ((sector, ym, week), list) in &batches {
             let w: f64 = list.iter().map(|s| s.weight).sum();
             let wv: f64 = list.iter().map(|s| s.weight * s.value).sum();
-            // If the weights are right, the weighted scatter about the batch
-            // mean is about n - 1. Where it is larger the loans disagree more
-            // than the model expects, and the batch is trusted less.
             let mean = wv / w;
             let scatter: f64 = list.iter().map(|s| s.weight * (s.value - mean).powi(2)).sum();
             let inflate = if list.len() > 1 { (scatter / (list.len() - 1) as f64).max(1.0) } else { 1.0 };
@@ -213,7 +169,6 @@ impl<'a> Engine<'a> {
             v.sort_by_key(|b| b.0);
         }
 
-        // Second sweep: each loan hears its sector, minus its own voice.
         for r in runs.iter_mut() {
             let sector = self.panel.borrowers[self.panel.instruments[r.inst].borrower].sector;
             let mut feed: Vec<SectorIn> = Vec::new();
@@ -232,7 +187,6 @@ impl<'a> Engine<'a> {
                     if n < MIN_PEERS || w <= 0.0 {
                         continue;
                     }
-                    // Usable from the first day after the batch closes.
                     feed.push(SectorIn { ym, avail_idx: (week + 1) * BATCH_DAYS, value: wv / w, var: inflate / w });
                 }
             }
@@ -255,28 +209,20 @@ impl<'a> Engine<'a> {
     }
 }
 
-/// One scored forecast of one mark.
 #[derive(Clone, Debug)]
 pub struct Record {
     pub inst: usize,
     pub family: usize,
     pub ym: i32,
-    /// The mark as reported, and the same lender's mark a quarter earlier.
     pub price: f64,
     pub prev: f64,
-    /// Forecast (mean, sd) at each rung of the information ladder.
     pub public_raw: (f64, f64),
     pub public: (f64, f64),
     pub peers: (f64, f64),
     pub full: (f64, f64),
-    /// Other lenders' marks of the same date already public.
     pub seen: u32,
 }
 
-/// Walk-forward backtest. For each calendar quarter after the first
-/// `min_train`, the model is fitted on marks filed before that quarter ended
-/// and asked to forecast every mark of it. No forecast ever uses a parameter
-/// estimated from data that was not yet public.
 pub fn backtest(panel: &Panel, level: &[f64], min_train: usize, mut progress: impl FnMut(i32, usize, &Fit)) -> Result<Vec<Record>, String> {
     let engine = Engine::new(panel, level);
     let mut have: Vec<i32> = panel.obs.iter().map(|o| o.ym).filter(|ym| matches!(ym.rem_euclid(12), 2 | 5 | 8 | 11)).collect();
@@ -294,12 +240,8 @@ pub fn backtest(panel: &Panel, level: &[f64], min_train: usize, mut progress: im
         let prev_ym = have[k - 1];
         let Some(&cut) = asof_of.get(&test_ym) else { continue };
 
-        // Training data: reporting dates before the test quarter, filed
-        // before it ended.
         let fit = calib::fit(panel, level, &|o: &Obs| o.ym < test_ym && o.filed_idx < cut)?;
 
-        // Marks to forecast: everything dated after the previous calendar
-        // quarter up to and including this one.
         let target = |o: &Obs| o.ym > prev_ym && o.ym <= test_ym;
         let insts: Vec<usize> = (0..panel.instruments.len()).filter(|&i| panel.obs_of(i).iter().any(|o| target(o))).collect();
         let end = panel.obs.iter().filter(|o| target(o)).map(|o| o.filed_idx.max(o.asof_idx + 1)).max().unwrap_or(cut).min(last_grid);
@@ -311,7 +253,6 @@ pub fn backtest(panel: &Panel, level: &[f64], min_train: usize, mut progress: im
 
         let mut n = 0;
         for ((a, b), c) in raw.iter().zip(&solo).zip(&full) {
-            // The three runs see identical marks in identical order.
             for ((fa, fb), fc) in a.forecasts.iter().zip(&b.forecasts).zip(&c.forecasts) {
                 let m = &b.marks[fb.mark];
                 if m.ym <= prev_ym || m.ym > test_ym || fb.late || !m.prev.is_finite() {

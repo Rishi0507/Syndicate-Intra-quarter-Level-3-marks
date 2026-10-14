@@ -1,5 +1,3 @@
-// The handful of scale and path helpers the charts need.
-
 export type Scale = ((x: number) => number) & { domain: [number, number]; range: [number, number]; invert(y: number): number };
 
 export function linear(domain: [number, number], range: [number, number]): Scale {
@@ -13,7 +11,6 @@ export function linear(domain: [number, number], range: [number, number]): Scale
   return f;
 }
 
-/** Round tick values covering a domain, about `count` of them. */
 export function ticks(domain: [number, number], count = 5): number[] {
   const [lo, hi] = domain;
   const span = hi - lo;
@@ -30,7 +27,6 @@ export function ticks(domain: [number, number], count = 5): number[] {
   return out;
 }
 
-/** A domain padded to round numbers. */
 export function nice(lo: number, hi: number, pad = 0.06): [number, number] {
   if (!(hi > lo)) {
     return [lo - 1, hi + 1];
@@ -54,7 +50,6 @@ export function line(xs: ArrayLike<number>, ys: ArrayLike<number>, sx: Scale, sy
   return d;
 }
 
-/** The closed outline between two series over the same xs. */
 export function band(xs: ArrayLike<number>, lo: ArrayLike<number>, hi: ArrayLike<number>, sx: Scale, sy: Scale): string {
   const n = xs.length;
   if (n === 0) {

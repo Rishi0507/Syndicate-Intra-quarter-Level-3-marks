@@ -1,6 +1,3 @@
-// Package panel turns raw Schedule of Investments rows into the object the
-// rest of the system reasons about: a panel of marks, one per instrument per
-// holder per reporting date, each stamped with the day it became public.
 package panel
 
 import (
@@ -17,9 +14,6 @@ import (
 	"syndicate/ingest/internal/taxonomy"
 )
 
-// Class is the seniority bucket marks are compared within. Lenders label the
-// same loan "first lien", "unitranche" or "one stop" by house style, so those
-// collapse into Senior; second lien and subordinated paper collapse into Junior.
 type Class uint8
 
 const (
@@ -42,30 +36,18 @@ func classOf(l ident.Lien) Class {
 	return Unclassified
 }
 
-// Price bounds. Floating-rate loans can be repaid at or near par, so they
-// are not marked far above it. A ratio above 104 is a unit or currency
-// mismatch between the principal and fair value fields, not a valuation.
 const (
 	minPrice = 0.0
 	maxPrice = 1.04
 )
 
-// The cost of a dollar loan made near par sits close to its principal: a few
-// points of original issue discount below, almost nothing above. Outside
-// this band the principal is in another currency, the facility is mostly
-// undrawn, or the position was bought at a deep discount. None of those
-// gives a ratio that can be read as a price.
 const (
 	minBasis = 0.85
 	maxBasis = 1.05
 )
 
-// firstDate is where the SEC's data set begins. Earlier dates appear only as
-// the comparative columns of the first filings, without their own filing dates.
 const firstDate = day.Date(20220901)
 
-// Margins are reported to the basis point but lenders disagree on whether a
-// credit spread adjustment is part of them. Bucketing to 25bp absorbs that.
 const spreadBucketBp = 25
 
 type position struct {
@@ -84,7 +66,6 @@ type position struct {
 	sector    int8
 }
 
-// Holder is one registrant.
 type Holder struct {
 	ID     int
 	CIK    string
@@ -95,7 +76,6 @@ type Holder struct {
 	Marks  int
 }
 
-// Borrower is one resolved portfolio company.
 type Borrower struct {
 	ID        int
 	Name      string
@@ -106,13 +86,10 @@ type Borrower struct {
 	Families  int
 }
 
-// Instrument is a borrower's debt in one seniority class.
 type Instrument struct {
 	ID       int
 	Borrower int
 	Class    Class
-	// Piece numbers the loans that one borrower and class turned out to
-	// hold: zero for the first, one for the next, and so on.
 	Piece    int
 	Holders  int
 	Families int
@@ -121,25 +98,21 @@ type Instrument struct {
 	Last     day.Date
 }
 
-// Mark is one holder's valuation of one instrument on one reporting date.
 type Mark struct {
 	Instrument int
 	Holder     int
 	AsOf       day.Date
 	Filed      day.Date
-	Original   bool // carried by the filing for its own period, so Filed is the first public release
+	Original   bool
 	Price      float64
 	Principal  float64
 	FairValue  float64
 	Cost       float64
-	SpreadBp   float64 // principal-weighted
+	SpreadBp   float64
 	Maturity   day.Date
 	Rows       int
 }
 
-// TrancheMark is a mark on a narrowly identified tranche: same borrower,
-// class, maturity month and margin. It exists for the strictest version of
-// the cross-holder comparison, where nothing but the valuation can differ.
 type TrancheMark struct {
 	Borrower   int
 	Class      Class
@@ -151,15 +124,12 @@ type TrancheMark struct {
 	Principal  float64
 }
 
-// Report explains what happened to every row.
 type Report struct {
-	Archives       int            `json:"archives"`
-	RowsRead       int            `json:"rows_read"`
-	RowsSuperseded int            `json:"rows_superseded"`
-	RowsKept       int            `json:"rows_kept"`
-	Dropped        map[string]int `json:"dropped"`
-	// Pieces counts the loans split out of a borrower and class that turned
-	// out to hold more than one, by the sign that gave them away.
+	Archives        int            `json:"archives"`
+	RowsRead        int            `json:"rows_read"`
+	RowsSuperseded  int            `json:"rows_superseded"`
+	RowsKept        int            `json:"rows_kept"`
+	Dropped         map[string]int `json:"dropped"`
 	Pieces          map[string]int `json:"pieces"`
 	Holders         int            `json:"holders"`
 	Families        int            `json:"families"`
@@ -176,7 +146,6 @@ type Report struct {
 	UnmappedSectors []string       `json:"unmapped_sector_labels_sample"`
 }
 
-// Panel is the finished data set.
 type Panel struct {
 	Holders     []Holder
 	Borrowers   []Borrower
@@ -186,19 +155,12 @@ type Panel struct {
 	Report      Report
 }
 
-// foreignRe spots loans denominated outside the dollar. Their principal is in
-// local currency while fair value is in dollars, so the ratio is not a price.
 var foreignRe = regexp.MustCompile(`(?i)\b(eur|gbp|cad|aud|sek|nok|dkk|chf|jpy|nzd|euribor|sonia|cdor|corra|bbsy|bbsw|stibor|nibor|saron|tibor)\b|[€£]|\bc\$|\ba\$` +
 	`|\b(british pound|pound sterling|australian dollar|canadian dollar|new zealand dollar|swedish krona|norwegian krone|danish krone|swiss franc|japanese yen)\b` +
 	`|\b(sn|e|c|b)\s*\+\s*\d`)
 
-// europeanFormRe spots the legal forms of continental and Nordic companies.
-// Such a borrower may still borrow in dollars, so this is used only together
-// with a cost above par, which a dollar loan does not have.
 var europeanFormRe = regexp.MustCompile(`(?i)\b(oy|oyj|ab|as|asa|aps|s\.?p\.?a\.?|s\.?r\.?l\.?|s\.?a\.?s\.?|s\.?a\.?r\.?l\.?|s\.?à\s*r\.?l\.?|gmbh|b\.?v\.?|n\.?v\.?|ag|s\.?l\.?|kft|sp\.? z o\.?o\.?)\s*$`)
 
-// foreignRate reads the reference-rate member. Anything that is not a dollar
-// rate means the loan is not in dollars.
 func foreignRate(member string) bool {
 	m := strings.ToLower(member)
 	if m == "" {
@@ -217,8 +179,6 @@ func foreignRate(member string) bool {
 	return false
 }
 
-// foreignAxis reads the currency axis, which names a member such as
-// "EUR [Member]" or "Euro Member Countries, Euro".
 func foreignAxis(member string) bool {
 	m := strings.ToLower(member)
 	if m == "" || strings.Contains(m, "usd") || strings.Contains(m, "united states") || strings.Contains(m, "u.s. dollar") {
@@ -251,10 +211,6 @@ func (f filing) betterThan(g filing) bool {
 	return f.adsh < g.adsh
 }
 
-// normaliseSpread returns a margin in basis points. XBRL percentages are
-// fractions (0.0575), but some filers tag the percent (5.75) or the basis
-// points (575). A loan margin lives between roughly 1% and 15%, which makes
-// the three encodings distinguishable by magnitude.
 func normaliseSpread(v float64) int32 {
 	switch {
 	case v <= 0:
@@ -274,15 +230,9 @@ func bucket(bp int32) int32 {
 	return (bp + spreadBucketBp/2) / spreadBucketBp * spreadBucketBp
 }
 
-// Build reads every archive twice. The first pass decides, for each holder and
-// reporting date, which filing is authoritative; the second keeps only that
-// filing's rows. Holding the choice rather than the rows keeps memory flat.
 func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 	rep := Report{Archives: len(archives), Dropped: map[string]int{}, Pieces: map[string]int{}}
 
-	// A reporting date appears in the filing for its own period and again as
-	// the comparative column of later filings. The filing for its own period
-	// is the original; the earliest one is when the mark became public.
 	chosen := map[groupKey]filing{}
 	for _, a := range archives {
 		st, err := soi.ReadZip(a, func(r *soi.Row) error {
@@ -317,11 +267,6 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 		sectorCode[s.Code] = int8(i)
 	}
 	drop := func(why string) { rep.Dropped[why]++ }
-	// A loan in another currency does not always look like one. In a quarter
-	// when the exchange rate is near one its cost sits inside the dollar
-	// band and it passes. So when any date of a holder's position in a
-	// borrower is caught, the holder and borrower are remembered, and the
-	// dates that slipped through are removed afterwards.
 	type holding struct {
 		cik      string
 		borrower string
@@ -357,22 +302,13 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 				return nil
 			}
 			if p.Unfunded {
-				// An undrawn commitment's "principal" is the undrawn amount
-				// and its fair value a fee or a small liability. The ratio
-				// would read as a loan marked at zero.
 				drop("unfunded commitment")
 				return nil
 			}
 			if r.Entity != "" {
-				// Held by a joint venture or subsidiary reported inside the
-				// filing: not the registrant's own position.
 				drop("inside a subsidiary")
 				return nil
 			}
-			// Some filers put the borrower on its own axis. It is cleaner
-			// than anything recovered from the identifier.
-			// A few filers put the whole identifier there instead, so it is
-			// taken only when it reads as a name.
 			if issuer := ident.TrimLabels(strings.TrimSuffix(strings.TrimSpace(r.Issuer), "[Member]")); issuer != "" &&
 				len(issuer) <= 70 && !strings.Contains(issuer, "%") && !(ident.Parsed{Borrower: issuer}).Nameless() {
 				p.Borrower = issuer
@@ -390,15 +326,9 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 				drop("non-dollar")
 				return nil
 			}
-			// One filer reports principal in thousands beside cost and fair
-			// value in dollars. Cost a thousand times principal is that, and
-			// nothing else.
 			if r.HasCost && r.Cost > 850*r.Principal && r.Cost < 1050*r.Principal {
 				r.Principal *= 1000
 			}
-			// No fund holds five billion dollars of one loan. A row that now
-			// says so had its cost and fair value filed a thousand times too
-			// large, and its principal right, or all three too large.
 			if r.Principal >= 5e9 {
 				r.Principal /= 1000
 				r.FairValue /= 1000
@@ -408,8 +338,6 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 				basis := r.Cost / r.Principal
 				switch {
 				case basis < 0.5:
-					// Little or nothing has been advanced: the "principal"
-					// is a commitment, mostly undrawn.
 					drop("unfunded commitment")
 					return nil
 				case basis < minBasis || basis > maxBasis:
@@ -432,9 +360,6 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 				drop("price out of range")
 				return nil
 			}
-			// With no cost to check against, a mark near zero cannot be told
-			// from an undrawn commitment, and a revolver or delayed draw
-			// marked low is far more likely undrawn than impaired.
 			if !r.HasCost && (price < 0.05 || (price < 0.5 && p.Facility != ident.Term)) {
 				drop("unfunded commitment")
 				return nil
@@ -473,9 +398,6 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 			}
 			res.Add(p.Borrower, p.Aliases, r.FairValue, resolve.MakeTermKey(ym, int(bucket(bp))), r.CIK)
 
-			// The sector comes from the sector axis where the filer fills
-			// it in for each position, and otherwise from an industry label
-			// inside the identifier. Most filers give neither.
 			sec := int8(-1)
 			label := r.Sector
 			if strings.TrimSpace(label) == "" {
@@ -523,8 +445,6 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 		borrowerOf[i] = assign[m]
 	}
 
-	// Seniority a holder left unstated is taken from another holder of the
-	// same borrower whose loan has the same maturity month and margin.
 	type termID struct {
 		borrower int
 		ym       int
@@ -542,14 +462,10 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 			known[k] = c
 		}
 	}
-	// Several of the largest lenders give no seniority in the identifier at
-	// all. Where another lender has stated it for the same borrower, borrow
-	// that: first by exact terms, and failing that by margin, since a second
-	// lien loan pays visibly more than the first lien above it.
 	type margin struct {
 		sum, weight float64
 	}
-	byClass := map[[2]int]*margin{} // borrower, class -> typical margin
+	byClass := map[[2]int]*margin{}
 	for i := range positions {
 		p := &positions[i]
 		c := classOf(p.lien)
@@ -567,7 +483,7 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 			m.weight += p.principal
 		}
 	}
-	const marginReach = 150.0 // basis points
+	const marginReach = 150.0
 	classes := make([]Class, len(positions))
 	for i := range positions {
 		p := &positions[i]
@@ -586,8 +502,6 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 				case sen != nil && jun == nil:
 					c = Senior
 				case sen == nil && jun != nil:
-					// Only junior paper stated: this may well be the senior
-					// loan above it. Leave it unclassified.
 				case sen != nil && jun != nil && p.spreadBp > 0 && sen.weight > 0 && jun.weight > 0:
 					ds := math.Abs(float64(p.spreadBp) - sen.sum/sen.weight)
 					dj := math.Abs(float64(p.spreadBp) - jun.sum/jun.weight)
@@ -605,7 +519,6 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 		classes[i] = c
 	}
 
-	// Instruments and marks.
 	type instKey struct {
 		borrower int
 		class    Class
@@ -700,11 +613,6 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 		return a.holder < b.holder
 	})
 
-	// A loan does not go from 100 to 6 and back to 100. A mark that leaves
-	// both its neighbours by twenty points in the same direction, while they
-	// agree with each other, is a reporting error in that one filing: a
-	// misplaced decimal, a principal in the wrong unit. It is removed. A
-	// real default does not come back, and is untouched by this.
 	{
 		type seriesKey struct {
 			inst   int
@@ -724,11 +632,6 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 					glitch[s[i]] = true
 				}
 			}
-			// The same at the start of a series, in one direction only. A
-			// first mark of 29 followed by 100 and 100 is a loan that was
-			// still being drawn, its fair value set against the whole
-			// commitment. A first mark of 100 followed by 30 and 30 is a
-			// default, and stays.
 			if len(s) >= 3 {
 				first, next, then := price(s[0]), price(s[1]), price(s[2])
 				if math.Abs(next-then) <= 0.05 && next-first >= 0.20 {
@@ -749,24 +652,9 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 		}
 	}
 
-	// One borrower and class can hide more than one loan, and marks of
-	// different loans must not be read as disagreement about one. Two signs
-	// give it away.
-	//
-	// A mark that climbs twenty-five points in a quarter to within five of
-	// par is not a recovery. Credit does not heal that fast. The old loan was
-	// restructured or repaid and the line now holds new paper, which is a
-	// new piece from that date for every holder whose mark made the climb.
-	//
-	// And two lenders ten points apart on four-fifths of the dates they
-	// share, over a year or more, are not arguing about one loan. One holds
-	// the first-out and the other the last-out, or one was left behind in a
-	// restructuring. Lenders who drift apart in a default and come back
-	// together do not meet this test, and stay in one piece: that
-	// disagreement is exactly what the model is there to read.
 	{
 		price := func(mk markKey) float64 { a := marks[mk]; return a.fv / a.principal }
-		pieces := map[int]int{} // pieces so far, by the instrument they came from
+		pieces := map[int]int{}
 		origin := map[int]int{}
 		newPiece := func(from int) int {
 			root := from
@@ -787,7 +675,6 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 			return mk
 		}
 
-		// New paper.
 		type seriesKey struct {
 			inst   int
 			holder int32
@@ -796,7 +683,7 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 			inst int
 			asof day.Date
 		}
-		series := map[seriesKey][]int{} // positions in markOrder, in date order
+		series := map[seriesKey][]int{}
 		var seriesOrder []seriesKey
 		for i, mk := range markOrder {
 			k := seriesKey{mk.inst, mk.holder}
@@ -828,8 +715,6 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 			}
 		}
 
-		// Different tranches. Compared family against family, since that is
-		// the unit whose marks the model reads as one voice.
 		type famDate struct {
 			family string
 			asof   day.Date
@@ -864,8 +749,6 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 			for f := range dates {
 				families = append(families, f)
 			}
-			// Longest history first, so the piece that keeps the
-			// instrument is the one most of the marks belong to.
 			sort.Slice(families, func(i, j int) bool {
 				if len(dates[families[i]]) != len(dates[families[j]]) {
 					return len(dates[families[i]]) > len(dates[families[j]])
@@ -949,7 +832,6 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 				return a.holder < b.holder
 			})
 		}
-		// First and last dates are recounted from the marks each piece kept.
 		for i := range insts {
 			insts[i].First, insts[i].Last = math.MaxInt32, 0
 		}
@@ -1013,7 +895,6 @@ func Build(archives []string, logf func(string, ...any)) (*Panel, error) {
 	for i, c := range clusters {
 		sec, bestV := "", 0.0
 		for j, v := range sectorVotes[i] {
-			// A vote for "other" only counts if nothing better was said.
 			if v > bestV && taxonomy.Sectors[j].Code != "other" {
 				bestV, sec = v, taxonomy.Sectors[j].Code
 			}

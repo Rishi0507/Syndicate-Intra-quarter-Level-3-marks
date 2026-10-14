@@ -1,19 +1,11 @@
-//! Numerical primitives: the normal distribution, robust summaries, small
-//! dense linear algebra and a deterministic random number generator.
-
 use std::f64::consts::PI;
 
 const INV_SQRT_2PI: f64 = 0.398_942_280_401_432_7;
 
-/// Standard normal density.
 pub fn norm_pdf(x: f64) -> f64 {
     INV_SQRT_2PI * (-0.5 * x * x).exp()
 }
 
-/// Standard normal distribution function, accurate to about 1e-15.
-///
-/// Uses the complementary error function with a rational Chebyshev
-/// approximation (W. J. Cody, 1969) so the tails keep relative accuracy.
 pub fn norm_cdf(x: f64) -> f64 {
     0.5 * erfc(-x / std::f64::consts::SQRT_2)
 }
@@ -97,10 +89,6 @@ fn erfc(x: f64) -> f64 {
     }
 }
 
-/// Inverse of the standard normal distribution function.
-///
-/// Peter Acklam's rational approximation followed by one step of Halley's
-/// method, which brings the result to full double precision.
 pub fn norm_inv(p: f64) -> f64 {
     if p <= 0.0 {
         return f64::NEG_INFINITY;
@@ -157,7 +145,6 @@ pub fn norm_inv(p: f64) -> f64 {
     x - u / (1.0 + 0.5 * x * u)
 }
 
-/// Linear-interpolated quantile of a slice. Sorts the slice in place.
 pub fn quantile(xs: &mut [f64], p: f64) -> f64 {
     if xs.is_empty() {
         return f64::NAN;
@@ -166,7 +153,6 @@ pub fn quantile(xs: &mut [f64], p: f64) -> f64 {
     quantile_sorted(xs, p)
 }
 
-/// Linear-interpolated quantile of an already sorted slice.
 pub fn quantile_sorted(xs: &[f64], p: f64) -> f64 {
     if xs.is_empty() {
         return f64::NAN;
@@ -188,7 +174,6 @@ pub fn mean(xs: &[f64]) -> f64 {
     xs.iter().sum::<f64>() / xs.len() as f64
 }
 
-/// Median absolute deviation scaled to estimate a normal standard deviation.
 pub fn mad_sigma(xs: &[f64]) -> f64 {
     if xs.is_empty() {
         return f64::NAN;
@@ -201,9 +186,6 @@ pub fn mad_sigma(xs: &[f64]) -> f64 {
     1.482_602_218_505_602 * median(&mut v)
 }
 
-/// Variance after clamping to the `p` and `1 - p` quantiles. A compromise
-/// between the MAD, which ignores the tails that matter for credit, and the
-/// raw variance, which a handful of defaults would dominate.
 pub fn winsor_var(xs: &[f64], p: f64) -> f64 {
     if xs.len() < 2 {
         return f64::NAN;
@@ -223,9 +205,6 @@ pub fn winsor_var(xs: &[f64], p: f64) -> f64 {
     (ss - s * s / n) / (n - 1.0)
 }
 
-/// Solves the symmetric positive definite system `A x = b` in place by
-/// Cholesky factorisation. `a` is row-major `n` by `n`. Returns false if the
-/// matrix is not positive definite.
 pub fn solve_spd(a: &mut [f64], b: &mut [f64], n: usize) -> bool {
     for j in 0..n {
         let mut d = a[j * n + j];
@@ -262,9 +241,6 @@ pub fn solve_spd(a: &mut [f64], b: &mut [f64], n: usize) -> bool {
     true
 }
 
-/// Accumulates the normal equations of a least squares problem one row at a
-/// time, so a regression over millions of observations needs only `k` squared
-/// numbers of state.
 pub struct Ols {
     k: usize,
     xtx: Vec<f64>,
@@ -290,7 +266,6 @@ impl Ols {
         self.yy += w * y * y;
     }
 
-    /// The same regression with another's observations taken out.
     pub fn without(&self, other: &Ols) -> Ols {
         let mut o = Ols { k: self.k, xtx: self.xtx.clone(), xty: self.xty.clone(), n: self.n - other.n, yy: self.yy - other.yy };
         for (a, b) in o.xtx.iter_mut().zip(&other.xtx) {
@@ -302,9 +277,6 @@ impl Ols {
         o
     }
 
-    /// Returns the coefficients and the weighted residual sum of squares. A
-    /// small ridge keeps a rank-deficient design solvable; the coefficients on
-    /// its redundant columns then shrink to zero, which is the wanted answer.
     pub fn solve(&self) -> Option<(Vec<f64>, f64)> {
         let k = self.k;
         let mut a = vec![0.0; k * k];
@@ -327,8 +299,6 @@ impl Ols {
     }
 }
 
-/// xoshiro256** seeded through splitmix64. Deterministic across platforms,
-/// which the standard library's generator does not promise.
 #[derive(Clone)]
 pub struct Rng {
     s: [u64; 4],
@@ -360,12 +330,10 @@ impl Rng {
         r
     }
 
-    /// Uniform on the open interval (0, 1).
     pub fn uniform(&mut self) -> f64 {
         ((self.next_u64() >> 11) as f64 + 0.5) / (1u64 << 53) as f64
     }
 
-    /// Standard normal by the polar Box-Muller method.
     pub fn normal(&mut self) -> f64 {
         if let Some(z) = self.spare.take() {
             return z;
@@ -382,7 +350,6 @@ impl Rng {
         }
     }
 
-    /// Exponential with unit rate.
     pub fn exponential(&mut self) -> f64 {
         -self.uniform().ln()
     }
@@ -434,7 +401,6 @@ mod tests {
             o.add(&[1.0, x], 3.0 - 2.0 * x, 1.0);
         }
         let (b, sse) = o.solve().unwrap();
-        // The ridge leaves a residual of order 1e-12 times the squared coefficients.
         assert!((b[0] - 3.0).abs() < 1e-8 && (b[1] + 2.0).abs() < 1e-8 && sse < 1e-6, "{b:?} {sse}");
     }
 

@@ -12,8 +12,6 @@
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <title>Syndicate</title>
     <script>
-      // Apply the saved theme before anything is painted, so a dark-mode
-      // visitor never sees a flash of the light page.
       try {
         if (localStorage.getItem("syndicate-theme") === "dark") {
           document.documentElement.dataset.theme = "dark";

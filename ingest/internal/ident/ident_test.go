@@ -2,8 +2,6 @@ package ident
 
 import "testing"
 
-// The identifiers below are in the grammars real registrants use. Each case
-// is one shape the parser has to get right.
 func TestParse(t *testing.T) {
 	cases := []struct {
 		id, typ  string
@@ -11,7 +9,6 @@ func TestParse(t *testing.T) {
 		lien     Lien
 		facility Facility
 	}{
-		// Name, instrument.
 		{"Associations, Inc., First lien senior secured loan", "", "Associations, Inc.", FirstLien, Term},
 		{"1261229 B.C. LTD., First lien senior secured notes", "", "1261229 B.C. LTD.", FirstLien, Term},
 		{"Acme Buyer, LLC, First lien senior secured revolving loan", "", "Acme Buyer, LLC", FirstLien, Revolver},
@@ -19,7 +16,6 @@ func TestParse(t *testing.T) {
 		{"Access CIG, LLC, First Lien Term Loan", "", "Access CIG, LLC", FirstLien, Term},
 		{"AAC Holdings, Inc., Secured Debt 1", "", "AAC Holdings, Inc.", FirstLien, Term},
 
-		// Name | instrument | affiliation.
 		{"AAH TOPCO, LLC | One stop 1 | Non-Affiliated Issuer", "", "AAH TOPCO, LLC", Unitranche, Term},
 		{"Apothecary Products, LLC | Senior secured 2 | Non-Affiliated Issuer", "", "Apothecary Products, LLC", FirstLien, Term},
 		{"Bristol Hospice L.L.C. | First lien senior secured revolving loan | Non-Affiliated Issuer", "", "Bristol Hospice L.L.C.", FirstLien, Revolver},
@@ -28,23 +24,19 @@ func TestParse(t *testing.T) {
 		{"601 Lafayette Mezz LLC (Delayed Draw) | Junior Secured Loans", "", "601 Lafayette Mezz LLC", SecondLien, DelayedDraw},
 		{"Brandner Design, LLC | Revolving Loan 2", "", "Brandner Design, LLC", LienUnknown, Revolver},
 
-		// Name and position number only: seniority is not in the identifier.
 		{"123Dentist, Inc. 1 | Non-Affiliated Issuer", "", "123Dentist, Inc.", LienUnknown, Term},
 		{"Cloud Software Group Inc 2 | Non-Affiliated Issuer", "", "Cloud Software Group Inc", LienUnknown, Term},
 		{"365 Retail Markets, LLC 1", "", "365 Retail Markets, LLC", LienUnknown, Term},
 
-		// Name | industry.
 		{"3Pillar Global Inc | Software & Services 1", "", "3Pillar Global Inc", LienUnknown, Term},
 		{"CSafe Global | Transportation 3", "", "CSafe Global", LienUnknown, Term},
 		{"Advanced Dermatology & Cosmetic Surgery | Health Care Equipment & Services", "", "Advanced Dermatology & Cosmetic Surgery", LienUnknown, Term},
 		{"Center Phase Energy, LLC | Electric Utilities 1", "", "Center Phase Energy, LLC", LienUnknown, Term},
 
-		// Heading | name.
 		{"Funded Investments - First lien | Accelya Lux Finco S.a r.l.", "", "Accelya Lux Finco S.a r.l.", FirstLien, Term},
 		{"US Corporate Debt | 1st Lien/Senior Secured Debt | Airwavz Solutions Inc. | Digital Infrastructure & Services | Term Loan | 9.01% (S + 5.25%; 1.00% Floor) | 3/31/2027", "", "Airwavz Solutions Inc.", FirstLien, Term},
 		{"Non-Controlled, Non-Affiliated Debt Investments | First Lien Senior Secured | Industrial Machinery & Supplies & Components | Rapid Pump Acquisition, Inc. Delayed Draw Term C Loan | Reference Rate Spread / Floor | 1M SOFR + 5.75% / 1.00%", "", "Rapid Pump Acquisition, Inc.", FirstLien, DelayedDraw},
 
-		// Everything run together: heading, industry, name, labelled terms.
 		{"Investments - non-controlled/non-affiliated Secured Debt Air Freight and Logistics Lightbeam Bidco Inc. Asset Type First Lien Delayed Draw Term Loan Reference Rate and Spread S + 4.75% Interest Rate 8.42% Maturity Date 05/06/2030 One", "", "Lightbeam Bidco Inc.", FirstLien, DelayedDraw},
 		{"Investments-non-controlled/non-affiliated Debt Investments Beverages Vamos Bidco, Inc. Investment First Lien Debt Reference Rate & Spread S + 4.75% Interest Rate 8.45% Maturity Date 01/30/2032 One", "", "Vamos Bidco, Inc.", FirstLien, Term},
 		{"Debt Investments - non-controlled/non-affiliated Commercial Services & Supplies Consor Intermediate II, LLC Investment First Lien Debt Reference Rate and Spread S + 4.50% Interest Rate 8.20% Maturity Date 12/5/2031 Two", "", "Consor Intermediate II, LLC", FirstLien, Term},
@@ -58,20 +50,15 @@ func TestParse(t *testing.T) {
 		{"Portfolio Company Debt Securities- United States Finance and Insurance Gravie, Inc. Type of Investment Secured Loan Investment Date June 4, 2024 Maturity Date July 1, 2029", "", "Gravie, Inc.", FirstLien, Term},
 		{"Affiliate Investments Autonomy Data Services, Inc.", "", "Autonomy Data Services, Inc.", LienUnknown, Term},
 
-		// Percentage headings before the name.
 		{"Investment Debt Investments - 179.3% United States - 161.1% 1st Lien/Senior Secured Debt - 155.1% Avalara, Inc Industry Software Interest Rate 6.45% Reference Rate and Spread S + 2.75% Maturity 03/26/32", "", "Avalara, Inc", FirstLien, Term},
 		{"Affiliate investments - 13.4% - Axero Holdings, LLC - Employee Collaboration Software - Delayed Draw Term Loan 4.50% Cash, (3M USD TERM SOFR + 2.50%) PIK, 12/31/2027", "", "Axero Holdings, LLC", LienUnknown, DelayedDraw},
 
-		// A start label.
 		{"First Lien Secured Debt Issuer Name Kinetic Purchaser, LLC Acquisition 11/30/2021 Maturity 11/10/2027 Industry Personal Products", "", "Kinetic Purchaser, LLC", FirstLien, Term},
 		{"Equity Securities Issuer Name 48Forty Intermediate Holdings, Inc. - Common Equity Acquisition 11/5/2024 Industry Containers and Packaging", "", "48Forty Intermediate Holdings, Inc.", Equity, Term},
 
-		// The type axis decides seniority when the text is silent.
 		{"Cascade Foods, Inc., Term Loan B", "DebtSecuritiesSecondLienMember", "Cascade Foods, Inc.", SecondLien, Term},
-		// "Unsecured notes" contains "secured note" and must not read as senior.
 		{"Ironwood Energy Services, LLC, Senior unsecured notes", "", "Ironwood Energy Services, LLC", Subordinated, Term},
 
-		// Not loans.
 		{"Pluralsight, LLC, Common Stock", "", "Pluralsight, LLC", Equity, Term},
 		{"Capital Integration Systems LLC (dba CAIS) | Class D Common Units | Non-Affiliated", "", "Capital Integration Systems LLC", Equity, Term},
 		{"BROOKP 2024-1, Collaterized loan obligation", "", "BROOKP 2024-1", Structured, Term},
@@ -79,7 +66,6 @@ func TestParse(t *testing.T) {
 		{"Ballyrock CLO 32, Ltd. | Structured Finance Note", "", "Ballyrock CLO 32, Ltd.", Structured, Term},
 		{"Orchard Senior Loan Fund LLC, Joint Venture", "Investment Funds [Member]", "Orchard Senior Loan Fund LLC", Structured, Term},
 
-		// Ordinary words that are also instrument words stay in a name.
 		{"Prime Loan Servicing Group, First lien senior secured loan", "", "Prime Loan Servicing Group", FirstLien, Term},
 		{"Sofranko Industrial Products Inc First lien senior secured loan", "", "Sofranko Industrial Products Inc", FirstLien, Term},
 		{"Parexel International Corp., First lien senior secured loan", "", "Parexel International Corp.", FirstLien, Term},
@@ -107,22 +93,16 @@ func TestAliases(t *testing.T) {
 	}
 }
 
-// Shapes found by auditing the panel built from real filings.
 func TestAuditedShapes(t *testing.T) {
 	for id, want := range map[string]string{
-		// A leading letter lost in the source, and a label glued to the name.
-		"ortfolio Company Debt Securities- United States Food Products Athletic Brewing Company, LLCType of Investment Equipment Financing":                "Athletic Brewing Company, LLC",
-		"on-controlled/Non-affiliated investments Debt Investments Chemicals, Plastics & Rubber Atlas Intermediate III, L.L.C. 2022 Incremental Term Loan": "Atlas Intermediate III, L.L.C.",
-		// A subsidiary named ahead of the heading.
+		"ortfolio Company Debt Securities- United States Food Products Athletic Brewing Company, LLCType of Investment Equipment Financing":                                       "Athletic Brewing Company, LLC",
+		"on-controlled/Non-affiliated investments Debt Investments Chemicals, Plastics & Rubber Atlas Intermediate III, L.L.C. 2022 Incremental Term Loan":                        "Atlas Intermediate III, L.L.C.",
 		"APCF SPV I, LLC BANK LOANS: NON-CONTROL/NON-AFFILIATE INVESTMENTS Health Care Providers & Services National Seating & Mobility Investment Type Senior Secured Term Loan": "National Seating & Mobility",
 		"ortfolio Investments Audax Credit BDC, Inc. BANK LOANS: NON-CONTROL/NON-AFFILIATE INVESTMENTS Capital Equipment Ohio Transmission Investment Type Senior Secured":        "Ohio Transmission",
-		// Facility and country first.
-		"Term Loan, United States of America, LAC Acquisition LLC d/b/a Lighthouse Autism Center, Healthcare Providers & Services, Rate S+11.10%, 2.50% Floor": "LAC Acquisition LLC",
-		"Term Loan, United States of America, BayMark Health Services Inc, Healthcare Providers & Services, Rate S+8.76%, 1.00% Floor":                         "BayMark Health Services Inc",
-		// A parenthesis the source truncated.
-		"Type Non-control/Non-affiliate Investment Debt and Equity Investments BCPE North Star US Holdco 2, Inc. (F/K/A Dessert Holdings": "BCPE North Star US Holdco 2, Inc.",
-		// A first segment that reads like an instrument but is a company.
-		"Senior Care Centers, LLC, First lien senior secured loan": "Senior Care Centers, LLC",
+		"Term Loan, United States of America, LAC Acquisition LLC d/b/a Lighthouse Autism Center, Healthcare Providers & Services, Rate S+11.10%, 2.50% Floor":                    "LAC Acquisition LLC",
+		"Term Loan, United States of America, BayMark Health Services Inc, Healthcare Providers & Services, Rate S+8.76%, 1.00% Floor":                                            "BayMark Health Services Inc",
+		"Type Non-control/Non-affiliate Investment Debt and Equity Investments BCPE North Star US Holdco 2, Inc. (F/K/A Dessert Holdings":                                         "BCPE North Star US Holdco 2, Inc.",
+		"Senior Care Centers, LLC, First lien senior secured loan":                                                                                                                "Senior Care Centers, LLC",
 	} {
 		if got := Parse(id, "").Borrower; got != want {
 			t.Errorf("Parse(%q).Borrower\n  got  %q\n  want %q", id, got, want)
@@ -186,7 +166,7 @@ func TestIndustries(t *testing.T) {
 		"Aerospace and Defense Acme Holdings":          "Acme Holdings",
 		"Health Care Equipment & Supplies Perkinelmer": "Perkinelmer",
 		"Services: Business Discovery Senior Living":   "Discovery Senior Living",
-		"Software":               "Software", // nothing would be left
+		"Software":               "Software",
 		"Softwarehouse Partners": "Softwarehouse Partners",
 	} {
 		if got, _ := stripIndustry(in); got != want {

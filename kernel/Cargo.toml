@@ -5,10 +5,6 @@ edition = "2021"
 description = "Price discovery for assets that do not trade: filtering, quoting and liquidity dynamics for private credit."
 license = "MIT"
 
-# Deliberately dependency-free. The same source builds a native CLI for
-# calibration and backtesting and a WebAssembly module the browser calls
-# directly, so every number on screen comes from the code that was tested.
-
 [lib]
 name = "syndicate_kernel"
 crate-type = ["cdylib", "rlib"]

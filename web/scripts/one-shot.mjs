@@ -1,7 +1,3 @@
-// Takes one screenshot of one address of the running site.
-//
-//   node scripts/one-shot.mjs <address> <out.png> [light|dark] [scroll-px] [width] [height]
-
 import puppeteer from "puppeteer-core";
 
 const [address, out, theme = "light", scroll = "0", width = "1440", height = "900"] = process.argv.slice(2);

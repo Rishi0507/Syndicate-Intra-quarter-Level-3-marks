@@ -1,23 +1,15 @@
-// Assembles one loan's inputs from the exported tables and asks the kernel
-// for its curve. The result matches what the native program computes.
-
 import { yearMonth, type Universe } from "./data";
 import { MARK_LEN, type Curve, type Kernel } from "./kernel";
 
 export interface LoanMark {
   family: number;
-  /** Grid day of the reporting date and of the filing. */
   asof: number;
   arrival: number;
   ym: number;
-  /** Reported price and the same lender's price a quarter earlier, in points. */
   price: number;
   prev: number;
-  /** Principal held, $ millions. */
   principal: number;
-  /** What the mark implies about fair value once the lender's smoothing and bias are removed, in points. */
   implied: number;
-  /** Forecast of this mark from public information alone, and just before it was filed. */
   publicMean: number;
   publicSd: number;
   peerMean: number;
@@ -36,20 +28,12 @@ export interface LoanCurve {
 
 export interface Print {
   day: number;
-  /** Points. */
   price: number;
   sd: number;
 }
 
-/** The price below which a loan is treated as stressed, as a fraction of par. */
 const V_REF = 0.97;
 
-/**
- * The view of a loan behind a reported price, for a lender that carries share
- * `phi` of its previous price into each new one. Smoothing bears only on a
- * change that starts or ends below the reference price, and a view stays
- * between nothing and par. Mirrors `filter::view` in the kernel.
- */
 export function viewOf(price: number, prev: number, phi: number): number {
   if (!(Number.isFinite(prev) && phi > 0 && (prev < V_REF || price < V_REF))) {
     return price;
@@ -58,7 +42,6 @@ export function viewOf(price: number, prev: number, phi: number): number {
   return Math.min(Math.max(raw, Math.min(price, 0)), Math.max(price, 1));
 }
 
-/** Marks of one loan as rows of the binary tables. */
 export function marksOf(u: Universe, loan: number) {
   const out: { family: number; asof: number; arrival: number; price: number; prev: number; principal: number; sw: number; swv: number }[] = [];
   for (let k = u.loans.mark_start[loan]; k < u.loans.mark_start[loan + 1]; k++) {
@@ -76,10 +59,6 @@ export function marksOf(u: Universe, loan: number) {
   return out;
 }
 
-/**
- * What a loan hears from its sector: each weekly batch of other loans'
- * surprises, with the loan's own contribution taken back out.
- */
 export function sectorFeed(u: Universe, loan: number, rows: ReturnType<typeof marksOf>): number[] {
   const { batch_days, min_peers } = u.meta.engine;
   const bySector = u.batches.get(u.loans.sector[loan]);
@@ -120,8 +99,6 @@ export function computeLoan(u: Universe, kernel: Kernel, loan: number, prints: P
   const start = u.loans.start[loan];
   const end = u.loans.last[loan];
 
-  // A lender's previous price is in the table. The one before that, which
-  // its previous view depends on, is the previous price of its previous mark.
   const yms = rows.map((m) => yearMonth(u.meta.days[m.asof]));
   const before = new Map<string, number>();
   rows.forEach((m, i) => before.set(`${m.family}:${yms[i]}`, m.prev));
@@ -169,21 +146,12 @@ export function computeLoan(u: Universe, kernel: Kernel, loan: number, prints: P
   return { loan, start, end, curve, marks: out };
 }
 
-/** Which regime a price sits in, as an index into the multiplier table. */
 export function regimeOf(points: number): 0 | 1 | 2 {
   return points >= 97 ? 0 : points >= 90 ? 1 : 2;
 }
 
 export const REGIMES = ["Performing", "Watch", "Stressed"] as const;
 
-/**
- * Half-width of the calibrated band at a confidence level, in points, for a
- * standard deviation in points. The model's standard deviation says which
- * estimates are surer than others. It is added to the typical forecast error
- * of the regime, which is the part of credit risk no model sees coming, and
- * the sum is scaled by a multiplier learned from forecasting marks out of
- * sample. That is what gives the band honest coverage.
- */
 export function bandHalfWidth(u: Universe, points: number, sd: number, level = 0.9): number {
   const k = u.meta.levels.indexOf(level);
   const regime = regimeOf(points);

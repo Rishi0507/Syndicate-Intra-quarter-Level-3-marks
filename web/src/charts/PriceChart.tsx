@@ -1,10 +1,3 @@
-// A loan's price chart: the daily estimate with its band, against the marks
-// lenders actually filed.
-//
-// Marks are drawn on the date they describe, with a hairline running to the
-// day they were published. The gap between the two is why the band cannot
-// tighten when the quarter ends, only when the filing lands.
-
 import { useId, useMemo, useState } from "react";
 import type { Universe } from "../lib/data";
 import { INFERRED, MUTED, OBSERVED, SERIES } from "../lib/color";
@@ -22,12 +15,10 @@ export interface AltBand {
 interface Props {
   u: Universe;
   lc: LoanCurve;
-  /** Grid day that prices are shown as of, marked on the chart. */
   day: number;
   prints?: Print[];
   alt?: AltBand | null;
   height?: number;
-  /** Called with a grid day and a price when the plot is clicked. */
   onPick?: (day: number, price: number) => void;
 }
 
@@ -45,9 +36,6 @@ export function PriceChart({ u, lc, day, prints = [], alt = null, height = 250, 
     const lo = new Float64Array(n);
     const hi = new Float64Array(n);
     const hind = new Float64Array(n);
-    // Before the first filing the loan is known only by the prior for a new
-    // loan, and the band is very wide. The axis is fitted to what follows,
-    // so that stretch does not flatten the rest of the picture.
     const firstSeen = Math.min(...lc.marks.map((mk) => mk.arrival), lc.end) - lc.start;
     let min = Infinity;
     let max = -Infinity;
@@ -191,9 +179,6 @@ export function PriceChart({ u, lc, day, prints = [], alt = null, height = 250, 
           )}
           </g>
 
-          {/* The public market the estimate is rolled forward on, as its own
-              small panel: a second scale on the main plot would invent a
-              relationship between the two that is not there. */}
           <text x={m.left} y={height + 6} className="label">
             {u.meta.factor.name === "baa_spread" ? "Baa spread, %" : u.meta.factor.name}
           </text>

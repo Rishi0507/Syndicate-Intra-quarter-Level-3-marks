@@ -1,10 +1,3 @@
-// Light and dark themes.
-//
-// Most of a theme is CSS custom properties, switched by a data attribute on
-// the root element. Two things are drawn on canvases that cannot read CSS,
-// the market map and the liquidity surface, so the colours they need are
-// repeated here.
-
 import { getState, setState } from "./state";
 
 export type Theme = "dark" | "light";
@@ -12,17 +5,11 @@ export type Theme = "dark" | "light";
 const KEY = "syndicate-theme";
 
 export interface CanvasPalette {
-  /**
-   * Price in points to RGB, lowest price first. One hue: a loan at par is
-   * the colour of the page, and the further below par the deeper the red.
-   */
   price: [number, [number, number, number]][];
-  /** The page's ink, for lines and markers on the surface. */
   ink: number;
   frame: number;
   frameOpacity: number;
   surfaceOpacity: number;
-  /** The surface of rest points: settled and known, settled in the dark, tipping. */
   lit: string;
   dark: string;
   tipping: string;
@@ -82,12 +69,10 @@ function apply(theme: Theme): void {
 
 type WithTransitions = Document & { startViewTransition?: (update: () => void) => unknown };
 
-/** Switches theme and remembers the choice. The whole page cross-fades where the browser can do so. */
 export function setTheme(theme: Theme): void {
   try {
     window.localStorage.setItem(KEY, theme);
   } catch {
-    // Private browsing: the choice lasts for this visit only.
   }
   const doc = document as WithTransitions;
   const calm = window.matchMedia("(prefers-reduced-motion: reduce)").matches;

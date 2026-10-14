@@ -1,11 +1,3 @@
-// The surface of rest points of the information-liquidity equation.
-//
-// Each curve running across the surface is the answer to one question: for a
-// loan of a given volatility, at what level of uncertainty does the market
-// settle, as a function of how many clients ask for quotes? Where a curve
-// doubles back there are two answers for the same flow, a lit market and a
-// dark one, with a tipping point between them.
-
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
@@ -43,7 +35,6 @@ export function Cusp3D({ kernel, market, rest, height = 380 }: Props) {
   const theme = useStore((s) => s.theme);
   const pal = PALETTES[theme];
 
-  // The scene is built once; the surface and markers are rebuilt on change.
   useEffect(() => {
     const el = host.current!;
     const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -58,7 +49,6 @@ export function Cusp3D({ kernel, market, rest, height = 380 }: Props) {
     controls.minDistance = 3;
     controls.maxDistance = 10;
 
-    // The box the surface lives in, drawn as its three back edges and floor.
     const frame = new THREE.LineSegments(
       new THREE.EdgesGeometry(new THREE.BoxGeometry(2 * BOX.x, 2 * BOX.y, 2 * BOX.z)),
       new THREE.LineBasicMaterial({ color: 0xbec6f0, transparent: true, opacity: 0.14 }),
@@ -125,7 +115,6 @@ export function Cusp3D({ kernel, market, rest, height = 380 }: Props) {
     };
   }, []);
 
-  // Everything about the market except flow and volatility shapes the surface.
   const { desk, markGap, markSd, printSd, subsidy, subsidyAbove } = market;
   const shapeKey = [desk.decay, desk.gamma, desk.informed, markGap, markSd, printSd, subsidy, subsidyAbove].join("|");
 
@@ -155,8 +144,6 @@ export function Cusp3D({ kernel, market, rest, height = 380 }: Props) {
         const logA = Math.log10(arrival[i]);
         ok[k] = Number.isFinite(logA) && logA >= LOG_A[0] && logA <= LOG_A[1] ? 1 : 0;
         pos.set(place(Math.min(LOG_A[1], Math.max(LOG_A[0], Number.isFinite(logA) ? logA : LOG_A[0])), sds[i], vol), 3 * k);
-        // A rest point is stable where more uncertainty would need less flow
-        // to hold it: where the curve falls as it rises.
         const prev = arrival[Math.max(0, i - 1)];
         const next = arrival[Math.min(N_SD - 1, i + 1)];
         const stable = next < prev;
@@ -199,11 +186,8 @@ export function Cusp3D({ kernel, market, rest, height = 380 }: Props) {
       geom.dispose();
       lgeom.dispose();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kernel, shapeKey, theme]);
 
-  // The market being studied: a vertical line at its flow and volatility, and
-  // a bead wherever that line meets the surface.
   useEffect(() => {
     const st = stage.current;
     if (!st) {

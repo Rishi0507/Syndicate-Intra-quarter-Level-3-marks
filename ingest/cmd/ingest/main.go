@@ -1,10 +1,3 @@
-// Command ingest builds the mark panel the kernel prices from.
-//
-//	ingest fetch-sec   download the SEC BDC data sets (needs SEC_CONTACT)
-//	ingest fetch-fred  download public market series from FRED
-//	ingest build       resolve entities and write the panel
-//	ingest synth       generate a synthetic universe with a known answer
-//	ingest inspect     show how one archive's identifiers are being parsed
 package main
 
 import (
@@ -35,10 +28,8 @@ func fail(err error) {
 	os.Exit(1)
 }
 
-// source records where a panel came from. The kernel and the interface read
-// it so that synthetic numbers can never be presented as real ones.
 type source struct {
-	Kind     string `json:"kind"` // "sec" or "synthetic"
+	Kind     string `json:"kind"`
 	Built    string `json:"built"`
 	Note     string `json:"note"`
 	Archives int    `json:"archives"`
@@ -193,9 +184,6 @@ func main() {
 		logf("wrote %s", build)
 
 	case "inspect":
-		// For each registrant in one archive: how its rows classify, and a
-		// spread of identifiers beside what the parser made of them. This is
-		// the view to tune the parser against.
 		zipPath := fs.String("zip", "", "archive to read")
 		per := fs.Int("n", 4, "samples per registrant")
 		top := fs.Int("top", 40, "registrants to show, largest first")
@@ -220,7 +208,6 @@ func main() {
 			g.rows++
 			p := ident.Parse(r.Identifier, r.Type)
 			g.liens[p.Lien.String()]++
-			// Every so many rows, so the samples span the schedule.
 			if g.rows%97 == 1 && len(g.samples) < *per {
 				g.samples = append(g.samples, fmt.Sprintf("    %q\n      type %q issuer %q\n      -> %q | %s | %s",
 					r.Identifier, r.Type, r.Issuer, p.Borrower, p.Lien, p.Facility))

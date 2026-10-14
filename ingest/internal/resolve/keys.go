@@ -1,11 +1,3 @@
-// Package resolve decides which borrower names, written differently by
-// different lenders, refer to the same company.
-//
-// Everything downstream compares marks across lenders, so a false merge is the
-// expensive mistake: it manufactures disagreement between two loans that were
-// never the same loan. The rules here are therefore biased toward leaving
-// names apart unless either the names agree after normalisation or the loan
-// terms the lenders report corroborate the match.
 package resolve
 
 import (
@@ -13,14 +5,10 @@ import (
 	"unicode"
 )
 
-// legal words carry no identity: "Acme, Inc." and "Acme LLC" are one company.
 var legal = set("inc", "incorporated", "llc", "lp", "llp", "lllp", "ltd", "limited",
 	"corp", "corporation", "co", "company", "plc", "gmbh", "sarl", "sa", "bv", "nv",
 	"ag", "pty", "ulc", "lc", "pllc", "pc", "se", "spa", "srl", "ab", "oy", "kg")
 
-// structure words name a rung of an acquisition vehicle, not the business.
-// A sponsor-backed borrower shows up as "Acme Buyer", "Acme Intermediate
-// Holdings" and "Acme Parent" depending on which entity a lender faces.
 var structure = set("holding", "holdco", "parent", "intermediate", "buyer", "bidco",
 	"topco", "midco", "acquisition", "acquiror", "acquirer", "acquireco", "merger",
 	"sub", "purchaser", "borrower", "issuer", "opco", "newco", "aggregator",
@@ -28,7 +16,6 @@ var structure = set("holding", "holdco", "parent", "intermediate", "buyer", "bid
 
 var stop = set("the", "and", "of", "for")
 
-// abbreviations lenders use interchangeably with the full word.
 var expand = map[string]string{
 	"intl": "international", "int": "international", "svc": "service",
 	"svcs": "service", "mgmt": "management", "hldg": "holding", "hldgs": "holding",
@@ -52,7 +39,6 @@ func set(words ...string) map[string]bool {
 }
 
 var fold = strings.NewReplacer(
-	// Longest first: the replacer takes the first pattern that matches at a position.
 	"s.à r.l.", " sarl ", "s.a r.l.", " sarl ", "s.a.r.l.", " sarl ",
 	"à", "a", "á", "a", "â", "a", "ä", "a", "ã", "a", "å", "a",
 	"è", "e", "é", "e", "ê", "e", "ë", "e",
@@ -63,7 +49,6 @@ var fold = strings.NewReplacer(
 	"&", " and ", "+", " and ", "'", "", "’", "", ".", "",
 )
 
-// stem folds plurals so "Technologies" and "Technology" share a token.
 func stem(t string) string {
 	n := len(t)
 	switch {
@@ -76,8 +61,6 @@ func stem(t string) string {
 	return t
 }
 
-// Tokens lowercases a name, strips punctuation and returns its normalised
-// words with legal suffixes and stop words removed.
 func Tokens(name string) []string {
 	s := fold.Replace(strings.ToLower(name))
 	fields := strings.FieldsFunc(s, func(r rune) bool {
@@ -94,20 +77,14 @@ func Tokens(name string) []string {
 		}
 		out = append(out, f)
 	}
-	// Single letters left over from "S.à r.l." style suffixes are noise at the
-	// end of a name but meaningful at the start ("A Place for Mom").
 	for len(out) > 1 && len(out[len(out)-1]) == 1 {
 		out = out[:len(out)-1]
 	}
 	return out
 }
 
-// Strict is the name with only legal form removed.
 func Strict(name string) string { return strings.Join(Tokens(name), " ") }
 
-// CoreTokens additionally removes acquisition-vehicle words and a trailing
-// position number. If that would leave nothing, the strict tokens are kept:
-// "Intermediate Holdings LLC" has no core to fall back on.
 func CoreTokens(name string) []string {
 	toks := Tokens(name)
 	out := make([]string, 0, len(toks))
@@ -125,7 +102,6 @@ func CoreTokens(name string) []string {
 	return out
 }
 
-// Core is the business name with legal form and deal structure removed.
 func Core(name string) string { return strings.Join(CoreTokens(name), " ") }
 
 func isSmallInt(t string) bool {

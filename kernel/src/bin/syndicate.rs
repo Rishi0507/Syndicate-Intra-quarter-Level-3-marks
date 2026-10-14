@@ -1,11 +1,3 @@
-//! Command line for calibration and backtesting.
-//!
-//!     syndicate fit      <build-dir>
-//!     syndicate backtest <build-dir> [--out report.json]
-//!     syndicate truth    <build-dir>     (synthetic universe only)
-//!     syndicate export   <build-dir> <out-dir>
-//!     syndicate rest     <arrival> <decay> <gamma> <informed> <daily-var> <mark-gap-days> <mark-sd> <print-sd>
-
 use std::path::Path;
 use std::process::exit;
 
@@ -89,8 +81,6 @@ fn main() {
             let fit = calib::fit(&panel, &level, &|_: &Obs| true).unwrap_or_else(|e| die(e));
             println!("\nFull-sample fit");
             show_fit(&fit);
-            // How sharply the data pin down smoothing: residual sum of squares
-            // at each candidate share, relative to the best.
             let best = fit.diag.phi_profile.iter().map(|p| p.1).fold(f64::INFINITY, f64::min);
             let profile: Vec<String> = fit
                 .diag
@@ -157,7 +147,6 @@ fn main() {
                 std::fs::write(&path, eval::report(&records).to_string()).unwrap_or_else(|e| die(format!("{path}: {e}")));
                 eprintln!("wrote {path}");
             }
-            // Every scored forecast, one per line, for looking at errors.
             if let Some(path) = args.iter().position(|a| a == "--records").and_then(|i| args.get(i + 1)) {
                 let mut rows = String::from("inst\tfamily\tym\tprice\tprev\tpublic_raw\tpublic\tsyndicate\tfull\tsd\tseen\n");
                 for r in &records {
@@ -177,8 +166,6 @@ fn main() {
             eprintln!("{} loans, {} marks, {} KB in {dest}", summary.loans, summary.marks, summary.bytes / 1024);
         }
         "rest" => {
-            // One market: the rest points of its skeleton, then how the real
-            // process behaves under quarterly, monthly and daily marks.
             let v: Vec<f64> = args[2..].iter().filter_map(|a| a.parse().ok()).collect();
             if v.len() != 8 {
                 die("rest needs eight numbers");
@@ -219,9 +206,6 @@ fn main() {
                 die("truth is only known for the synthetic universe");
             }
             let fit = calib::fit(&panel, &level, &|_: &Obs| true).unwrap_or_else(|e| die(e));
-            // Band multipliers come from forecasting marks, the only thing
-            // that can be scored on real data. Whether they also make the
-            // bands around the unobservable value honest is the question.
             let records = engine::backtest(&panel, &level, MIN_TRAIN, |_, _, _| {}).unwrap_or_else(|e| die(e));
             let mult = eval::bands(&records);
             let rep = truth::score(&panel, &level, &fit, &mult, Path::new(&args[2])).unwrap_or_else(|e| die(e));

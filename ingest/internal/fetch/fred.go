@@ -15,15 +15,11 @@ import (
 	"syndicate/ingest/internal/day"
 )
 
-// Series is one FRED series and the column it becomes in the factor table.
 type Series struct {
 	ID     string
 	Column string
 }
 
-// Factors are the daily public signals a private mark is rolled forward on.
-// The ICE BofA option-adjusted spreads are published on FRED with a rolling
-// three-year window, so the Moody's Baa spread carries the longer history.
 var Factors = []Series{
 	{"BAA10Y", "baa_spread"},
 	{"BAMLH0A0HYM2", "hy_oas"},
@@ -40,7 +36,6 @@ var Factors = []Series{
 
 const fredCSV = "https://fred.stlouisfed.org/graph/fredgraph.csv?id="
 
-// FRED downloads each series' CSV into dir.
 func FRED(dir string, logf func(string, ...any)) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -79,7 +74,7 @@ func readSeries(path string) (map[day.Date]float64, error) {
 	defer f.Close()
 	out := map[day.Date]float64{}
 	sc := bufio.NewScanner(f)
-	sc.Scan() // header
+	sc.Scan()
 	for sc.Scan() {
 		parts := strings.SplitN(sc.Text(), ",", 2)
 		if len(parts) != 2 {
@@ -88,17 +83,13 @@ func readSeries(path string) (map[day.Date]float64, error) {
 		d := day.Parse(parts[0])
 		v, err := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
 		if d.IsZero() || err != nil {
-			continue // FRED writes "." or nothing on days without an observation
+			continue
 		}
 		out[d] = v
 	}
 	return out, sc.Err()
 }
 
-// WriteFactors merges the downloaded series into one table with a row per
-// day on which any series printed, starting at from. Cells are left empty
-// where a series has no observation; nothing is filled or interpolated here,
-// because whether a gap is a holiday or missing history is the model's call.
 func WriteFactors(rawDir, outPath string, from day.Date) (int, error) {
 	cols := make([]map[day.Date]float64, len(Factors))
 	days := map[day.Date]struct{}{}

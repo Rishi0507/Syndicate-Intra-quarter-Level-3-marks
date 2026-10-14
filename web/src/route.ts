@@ -1,6 +1,3 @@
-// Keeps the address bar in step with what is on screen, so a view or a loan
-// can be linked to: #/desk, #/evidence, #/loan/412.
-
 import { getState, setState, type State, type View } from "./state";
 
 const VIEWS: View[] = ["market", "lenders", "desk", "evidence", "method"];
@@ -21,7 +18,6 @@ function format(s: State): string {
   return `#/${s.view}`;
 }
 
-/** Applies the current address, then follows it. Returns a function that stops following. */
 export function followAddress(loans: number, subscribe: (l: () => void) => () => void): () => void {
   const read = () => {
     const patch = parse(window.location.hash, loans);

@@ -1,14 +1,4 @@
 #!/usr/bin/env bash
-# Builds everything from source and produces the site's data.
-#
-#   scripts/pipeline.sh synthetic    generated universe with a known answer (default)
-#   scripts/pipeline.sh sec          real SEC filings
-#
-# For real filings, either set SEC_CONTACT to a name and an email address you
-# can be reached at (the SEC requires automated clients to identify
-# themselves), or download the *_bdc.zip archives yourself from
-# https://www.sec.gov/data-research/sec-markets-data/bdc-data-sets
-# into data/raw/sec.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

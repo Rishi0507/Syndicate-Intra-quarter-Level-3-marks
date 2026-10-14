@@ -1,16 +1,13 @@
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-/** 20240331 -> "31 Mar 2024" */
 export function fmtDay(d: number): string {
   return `${d % 100} ${MONTHS[(Math.floor(d / 100) % 100) - 1]} ${Math.floor(d / 10000)}`;
 }
 
-/** 20240331 -> "Mar 2024" */
 export function fmtMonth(d: number): string {
   return `${MONTHS[(Math.floor(d / 100) % 100) - 1]} ${Math.floor(d / 10000)}`;
 }
 
-/** Year-month index -> "Q1 2024" */
 export function fmtQuarter(ym: number): string {
   return `Q${Math.floor((ym % 12) / 3) + 1} ${Math.floor(ym / 12)}`;
 }
@@ -35,7 +32,6 @@ export function fmtInt(n: number): string {
   return Math.round(n).toLocaleString("en-US");
 }
 
-/** $ millions -> "$12.4m", "$1.2bn" */
 export function fmtSize(millions: number | null): string {
   if (millions == null || !Number.isFinite(millions)) {
     return "–";

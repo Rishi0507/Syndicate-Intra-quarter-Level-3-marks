@@ -1,6 +1,3 @@
-// Package taxonomy maps the labels filers invent onto two small shared
-// vocabularies: an industry sector for each borrower and a manager family for
-// each lender.
 package taxonomy
 
 import (
@@ -8,13 +5,11 @@ import (
 	"unicode"
 )
 
-// Sector is a canonical industry bucket.
 type Sector struct {
 	Code  string
 	Label string
 }
 
-// Sectors is the full vocabulary, in display order.
 var Sectors = []Sector{
 	{"software", "Software & Technology"},
 	{"healthcare", "Healthcare"},
@@ -33,9 +28,6 @@ var Sectors = []Sector{
 	{"other", "Other"},
 }
 
-// sectorRules are tried in order and the first hit wins, so the order encodes
-// precedence: "Health Care Technology" is healthcare, "Electronic Equipment"
-// is technology rather than a utility, "Consumer Finance" is a financial.
 var sectorRules = []struct {
 	code string
 	any  []string
@@ -62,10 +54,6 @@ var sectorRules = []struct {
 		"consulting", "staffing"}},
 }
 
-// spaced lowercases a label and replaces punctuation with spaces. With camel
-// set it also breaks XBRL member names into words, so "HealthCareSectorMember"
-// and "Health Care" look alike. Registrant names are left whole: splitting
-// "PennantPark" or "BlackRock" would hide them from the family list.
 func spaced(s string, camel bool) string {
 	var b strings.Builder
 	var prev rune
@@ -83,8 +71,6 @@ func spaced(s string, camel bool) string {
 	return " " + strings.Join(strings.Fields(b.String()), " ") + " "
 }
 
-// SectorOf returns the canonical sector code for a filer's industry label,
-// or "" when the label is empty.
 func SectorOf(label string) string {
 	if strings.TrimSpace(label) == "" {
 		return ""
@@ -100,9 +86,6 @@ func SectorOf(label string) string {
 	return "other"
 }
 
-// nameHints are words in a company's own name that give its sector away.
-// Only whole words count, and only words that rarely mislead: "Dental" and
-// "Insurance" are in, "Technologies" is not.
 var nameHints = map[string]string{
 	"software": "software", "cloud": "software", "cyber": "software", "data": "software", "analytics": "software",
 	"health": "healthcare", "healthcare": "healthcare", "medical": "healthcare", "dental": "healthcare",
@@ -123,8 +106,6 @@ var nameHints = map[string]string{
 	"staffing": "business", "consulting": "business",
 }
 
-// SectorOfName guesses a sector from a borrower's name. It returns "" when
-// the name gives nothing away, which is most of the time.
 func SectorOfName(name string) string {
 	for _, w := range strings.Fields(spaced(name, false)) {
 		if code, ok := nameHints[w]; ok {
@@ -134,9 +115,6 @@ func SectorOfName(name string) string {
 	return ""
 }
 
-// families groups registrants that share a valuation process. Vehicles run by
-// one manager mark a shared loan with one committee, so agreement between them
-// is not independent evidence and must not be counted as such.
 var families = []struct {
 	label string
 	any   []string
@@ -220,7 +198,6 @@ var families = []struct {
 	{"PhenixFIN", []string{"phenixfin"}},
 }
 
-// generic words say what kind of vehicle a registrant is, not whose it is.
 var generic = map[string]bool{
 	"capital": true, "corp": true, "corporation": true, "fund": true, "inc": true,
 	"bdc": true, "lending": true, "credit": true, "income": true, "private": true,
@@ -233,9 +210,6 @@ var generic = map[string]bool{
 	"ltd": true, "group": true, "management": true, "debt": true, "loan": true,
 }
 
-// FamilyOf returns the manager family a registrant belongs to. Registrants
-// outside the curated list fall back to the leading distinctive words of
-// their own name, which keeps sibling vehicles together in the common case.
 func FamilyOf(holder string) string {
 	s := spaced(holder, false)
 	for _, f := range families {

@@ -8,19 +8,15 @@ import type { Kernel } from "../lib/kernel";
 import { setState, useStore } from "../state";
 import { LoanSheet } from "./LoanSheet";
 
-/** Trading days in a quarter, for "since last quarter". */
 const QUARTER = 63;
 
 export function Market({ u, kernel }: { u: Universe; kernel: Kernel }) {
   const day = useStore((s) => s.day);
   const selected = useStore((s) => s.selected);
-  // Price colours come from the theme; redraw when it changes.
   useStore((s) => s.theme);
   const sheet = useRef<HTMLDivElement>(null);
   const synthetic = u.meta.source === "synthetic";
 
-  // With nothing chosen, show the loan most lenders report: the one the
-  // model has most to say about.
   const featured = useMemo(() => {
     let best = 0;
     for (let i = 1; i < u.loans.name.length; i++) {
@@ -35,7 +31,6 @@ export function Market({ u, kernel }: { u: Universe; kernel: Kernel }) {
   }, [u, day]);
   const loan = selected ?? featured;
 
-  // Loans more than one lender holds, by how far their price has fallen in a quarter.
   const movers = useMemo(() => {
     const out: { loan: number; price: number; change: number }[] = [];
     for (let i = 0; i < u.loans.name.length; i++) {

@@ -11,11 +11,8 @@ import { PALETTES } from "../theme";
 interface Loan {
   id: string;
   label: string;
-  /** Standard deviation of one day's change in value, points. */
   vol: number;
-  /** Noise of one round of marks taken together, points. */
   markSd: number;
-  /** A typical error bar for the quote panel, points. */
   sd: number;
 }
 
@@ -31,7 +28,6 @@ const MARKS = [
   { id: 1, label: "Daily" },
 ];
 
-/** A competitive request-for-quote market: clients shop each quote hard. */
 const TRAPPED: DeskParams = { arrival: 2, decay: 8, gamma: 0.02, informed: 0.45, inventory: 0 };
 
 function Slider({
@@ -84,8 +80,6 @@ export function Desk({ kernel }: { kernel: Kernel }) {
     { label: "Being picked off", value: quote.adverseSelection, color: SERIES[2] },
   ];
 
-  // The half-spread as the error bar grows: a straight line, whose slope is
-  // the adverse selection width.
   const sweep = useMemo(() => {
     const xs = Array.from({ length: 41 }, (_, i) => (i * 3) / 40);
     return { xs, total: xs.map((x) => kernel.quote({ ...desk, inventory: 0 }, 100, x, dailyVar).halfSpread) };

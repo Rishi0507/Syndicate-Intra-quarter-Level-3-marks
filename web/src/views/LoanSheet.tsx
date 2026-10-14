@@ -16,12 +16,10 @@ const SCHEDULES: { id: Schedule; label: string; gap: number }[] = [
   { id: "daily", label: "Daily", gap: 1 },
 ];
 
-/** One loan: its price today and how sure, the marks behind it, and the quote a dealer could make. */
 export function LoanSheet({ u, kernel, loan }: { u: Universe; kernel: Kernel; loan: number }) {
   const day = useStore((s) => s.day);
   const desk = useStore((s) => s.desk);
   const printSd = useStore((s) => s.printSd);
-  // The price dot is coloured from the theme's scale; redraw when it changes.
   useStore((s) => s.theme);
   const [prints, setPrints] = useState<Print[]>([]);
   const [adding, setAdding] = useState(false);
@@ -35,10 +33,6 @@ export function LoanSheet({ u, kernel, loan }: { u: Universe; kernel: Kernel; lo
 
   const lc = useMemo(() => computeLoan(u, kernel, loan, prints), [u, kernel, loan, prints]);
 
-  // What the band would look like had the loan been marked more often and
-  // published at once. Uncertainty in this model does not depend on the
-  // values observed, only on when and how precisely, so the band's width is
-  // exact; its centre is assumed to follow the hindsight path.
   const alt: AltBand | null = useMemo(() => {
     const gap = SCHEDULES.find((s) => s.id === schedule)!.gap;
     if (gap === 0 || lc.marks.length === 0) {
@@ -66,11 +60,9 @@ export function LoanSheet({ u, kernel, loan }: { u: Universe; kernel: Kernel; lo
     return kernel.quote(desk, mean, sd, dailyVar);
   }, [kernel, dyn, dpq, desk, mean, sd]);
 
-  // What one trade print would do to the error bar and the spread.
   const afterPrint = Math.sqrt((sd * sd * printSd * printSd) / (sd * sd + printSd * printSd));
   const saved = 2 * kernel.adverseWidth(desk.informed) * (sd - afterPrint);
 
-  // The most recent reporting date with marks public by the day shown.
   const latestYm = Math.max(-Infinity, ...lc.marks.filter((m) => m.arrival <= at).map((m) => m.ym));
   const latest = lc.marks.filter((m) => m.ym === latestYm && m.arrival <= at).sort((a, b) => a.arrival - b.arrival);
   const pending = lc.marks.filter((m) => m.ym > latestYm && m.asof <= at).length;
@@ -96,7 +88,6 @@ export function LoanSheet({ u, kernel, loan }: { u: Universe; kernel: Kernel; lo
         </div>
         <div className="estimate">
           <b className="num">{fmtPrice(mean)}</b>
-          {/* A price cannot go below nothing, so a band that would is given as a range. */}
           <span className="num">{half > mean ? `0 to ${fmtPrice(mean + half)}` : `± ${fmtPrice(half)}`}</span>
         </div>
       </div>

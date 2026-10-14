@@ -1,6 +1,3 @@
-//! A minimal JSON value and writer. The kernel only ever emits JSON, so this
-//! is all it needs, and it keeps the crate free of dependencies.
-
 use std::fmt::Write;
 
 #[derive(Clone, Debug)]
@@ -19,7 +16,6 @@ impl Json {
         Json::Obj(Vec::new())
     }
 
-    /// Adds a field to an object and returns it, for chaining.
     pub fn with(mut self, key: &str, value: impl Into<Json>) -> Json {
         if let Json::Obj(fields) = &mut self {
             fields.push((key.to_string(), value.into()));
@@ -27,8 +23,6 @@ impl Json {
         self
     }
 
-    /// Numbers rounded to `places` decimals, which keeps payloads compact
-    /// without visible loss.
     pub fn round(x: f64, places: i32) -> Json {
         if !x.is_finite() {
             return Json::Null;

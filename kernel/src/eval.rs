@@ -1,16 +1,7 @@
-//! Scores forecasts: how close, and how honest about their own uncertainty.
-//!
-//! Accuracy is reported as a ladder. Each rung adds one source of information
-//! to the rung below, so the gain from each is visible on its own. Honesty is
-//! reported as coverage: an interval claimed to hold 90% of outcomes should
-//! hold 90% of them, in every regime, on data it has not seen.
-
 use crate::engine::Record;
 use crate::json::Json;
 use crate::stats::{norm_cdf, norm_inv};
 
-/// Where the lender's previous mark sat. Loans behave differently by regime,
-/// and averages over all of them are dominated by the uneventful majority.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Regime {
     Performing,
@@ -40,7 +31,6 @@ impl Regime {
     }
 }
 
-/// The rungs of the information ladder, lowest first.
 pub const RUNGS: [(&str, &str); 5] = [
     ("stale", "Last mark carried forward"),
     ("public_raw", "Rolled forward with public spreads and pull to par"),
@@ -64,7 +54,6 @@ pub struct Score {
     pub n: usize,
     pub mae: f64,
     pub rmse: f64,
-    /// Share of the stale forecast's squared error removed.
     pub skill: f64,
 }
 
@@ -88,32 +77,16 @@ pub const LEVELS: [f64; 4] = [0.50, 0.80, 0.90, 0.95];
 #[derive(Clone, Debug, Default)]
 pub struct Coverage {
     pub n: usize,
-    /// Share of outcomes inside the model's Gaussian interval, per level.
     pub gaussian: [f64; 4],
-    /// The same after conformal calibration.
     pub conformal: [f64; 4],
-    /// Mean width of the calibrated 90% interval, in price.
     pub width90: f64,
-    /// Mean width of a 90% interval built from the stale mark and the
-    /// historical distribution of quarterly moves: the honest naive band.
     pub naive_width90: f64,
     pub naive_cover90: f64,
 }
 
-/// How an interval is drawn around an estimate, per regime and level:
-/// `mean +/- mult * (sd + floor)`.
-///
-/// The model's standard deviation says which forecasts are surer than
-/// others, but credit errors have a floor it does not see: a loan no one
-/// expected to move is the one that defaults. So the yardstick for an error
-/// is the model's sd plus the typical error of the regime, and the
-/// multiplier is the empirical quantile of past errors measured against it.
-/// Given exchangeable errors that delivers the stated coverage whatever
-/// their distribution.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Bands {
     pub mult: [[f64; 4]; 3],
-    /// The median absolute forecast error of each regime, in price.
     pub floor: [f64; 3],
 }
 
@@ -132,8 +105,6 @@ fn median_of(v: &[f64]) -> f64 {
     0.5 * (s[(s.len() - 1) / 2] + s[s.len() / 2])
 }
 
-/// Conformal calibration, walk-forward and per regime. Only quarters before
-/// the one being scored set its floor and its multipliers.
 pub fn coverage(records: &[Record]) -> Vec<(Regime, Coverage)> {
     let mut order: Vec<&Record> = records.iter().collect();
     order.sort_by_key(|r| r.ym);
@@ -143,8 +114,8 @@ pub fn coverage(records: &[Record]) -> Vec<(Regime, Coverage)> {
     const MIN_SCORES: usize = 60;
     let mut out = Vec::new();
     for regime in REGIMES {
-        let mut past: Vec<(f64, f64)> = Vec::new(); // |error| and sd of earlier forecasts
-        let mut moves: Vec<f64> = Vec::new(); // |price - prev|, sorted
+        let mut past: Vec<(f64, f64)> = Vec::new();
+        let mut moves: Vec<f64> = Vec::new();
         let mut c = Coverage::default();
         let (mut hit_g, mut hit_c) = ([0usize; 4], [0usize; 4]);
         let (mut width, mut naive_width, mut naive_hit) = (0.0, 0.0, 0usize);
@@ -202,9 +173,6 @@ pub fn coverage(records: &[Record]) -> Vec<(Regime, Coverage)> {
     out
 }
 
-/// Floors and multipliers per regime from every scored forecast: what the
-/// interface draws around an estimate. A regime with too few forecasts falls
-/// back to all of them pooled.
 pub fn bands(records: &[Record]) -> Bands {
     let pairs = |sel: &dyn Fn(&Record) -> bool| -> Vec<(f64, f64)> {
         records.iter().filter(|r| sel(r) && r.full.1 > 0.0).map(|r| ((r.price - r.full.0).abs(), r.full.1)).collect()
@@ -227,7 +195,6 @@ pub fn bands(records: &[Record]) -> Bands {
     out
 }
 
-/// The split-conformal quantile: the ceil((n + 1) * level)-th smallest score.
 pub fn conformal_quantile(sorted: &[f64], level: f64) -> f64 {
     let n = sorted.len();
     if n == 0 {
@@ -240,8 +207,6 @@ pub fn conformal_quantile(sorted: &[f64], level: f64) -> f64 {
     sorted[rank.max(1) - 1]
 }
 
-/// Histogram of probability integral transforms in ten bins. A calibrated
-/// forecast gives a flat histogram.
 pub fn pit(records: &[&Record]) -> [f64; 10] {
     let mut h = [0.0; 10];
     if records.is_empty() {
@@ -276,7 +241,6 @@ fn ladder(records: &[&Record]) -> Json {
     )
 }
 
-/// The full evaluation as JSON. Errors are in price points (par is 100).
 pub fn report(records: &[Record]) -> Json {
     let all: Vec<&Record> = records.iter().collect();
     let followers: Vec<&Record> = records.iter().filter(|r| r.seen > 0).collect();
@@ -303,8 +267,6 @@ pub fn report(records: &[Record]) -> Json {
         })
         .collect::<Vec<_>>();
 
-    // A lender on an off-cycle fiscal calendar is scored with the calendar
-    // quarter its date falls in, which is the one it was forecast with.
     let calendar = |ym: i32| ym + (2 - ym.rem_euclid(3));
     let mut quarters: Vec<i32> = records.iter().map(|r| calendar(r.ym)).collect();
     quarters.sort_unstable();
@@ -333,7 +295,6 @@ pub fn report(records: &[Record]) -> Json {
         .with("pit", Json::nums(&pit(&all), 4))
 }
 
-/// A plain-text version of the ladder for the terminal.
 pub fn print_ladder(title: &str, records: &[&Record]) {
     println!("\n  {title}  (n = {})", records.len());
     println!("  {:<46} {:>8} {:>8} {:>8}", "", "MAE", "RMSE", "skill");
@@ -355,23 +316,17 @@ mod tests {
     #[test]
     fn conformal_quantile_is_the_finite_sample_rank() {
         let s: Vec<f64> = (1..=9).map(|x| x as f64).collect();
-        // ceil(10 * 0.9) = 9th smallest.
         assert_eq!(conformal_quantile(&s, 0.9), 9.0);
-        // ceil(10 * 0.95) = 10 > n: no finite bound is justified.
         assert!(conformal_quantile(&s, 0.95).is_infinite());
         assert_eq!(conformal_quantile(&s, 0.5), 5.0);
     }
 
-    /// Errors with far fatter tails than the model claims: Gaussian intervals
-    /// must under-cover and conformal ones must not.
     #[test]
     fn conformal_repairs_fat_tails() {
         let mut rng = Rng::new(5);
         let mut records = Vec::new();
         for q in 0..12 {
             for _ in 0..400 {
-                // Student-t with 3 degrees of freedom, scaled to unit variance,
-                // while the "model" reports sd = 0.5.
                 let t = rng.normal() / ((rng.normal().powi(2) + rng.normal().powi(2) + rng.normal().powi(2)) / 3.0).sqrt();
                 let e = 0.01 * t / 3f64.sqrt();
                 records.push(rec(q * 3, 0.99 + e, 0.99, 0.99, 0.005));

@@ -1,6 +1,3 @@
-// Package day is a small calendar-date type. Everything downstream of ingest
-// keys on whole days, so dates are carried as yyyymmdd integers and converted
-// to a serial day number only where arithmetic is needed.
 package day
 
 import (
@@ -10,10 +7,8 @@ import (
 	"time"
 )
 
-// Date is a calendar date encoded as yyyymmdd. The zero value means "unknown".
 type Date int32
 
-// New builds a Date from its components without validating them.
 func New(y, m, d int) Date { return Date(y*10000 + m*100 + d) }
 
 func (d Date) Year() int    { return int(d) / 10000 }
@@ -25,7 +20,6 @@ func (d Date) Time() time.Time {
 	return time.Date(d.Year(), time.Month(d.Month()), d.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-// Serial is the number of days since 1970-01-01.
 func (d Date) Serial() int { return int(d.Time().Unix() / 86400) }
 
 func FromTime(t time.Time) Date { return New(t.Year(), int(t.Month()), t.Day()) }
@@ -41,14 +35,11 @@ func (d Date) String() string {
 	return fmt.Sprintf("%04d-%02d-%02d", d.Year(), d.Month(), d.Day())
 }
 
-// MonthEnd returns the last day of d's month.
 func (d Date) MonthEnd() Date {
 	first := time.Date(d.Year(), time.Month(d.Month()), 1, 0, 0, 0, 0, time.UTC)
 	return FromTime(first.AddDate(0, 1, -1))
 }
 
-// Parse accepts the three spellings the SEC data sets use across tables:
-// mm/dd/yyyy, yyyy-mm-dd and yyyymmdd. Anything else yields the zero Date.
 func Parse(s string) Date {
 	s = strings.TrimSpace(s)
 	if s == "" {
@@ -59,7 +50,6 @@ func Parse(s string) Date {
 	}
 	if strings.Count(s, "/") == 2 {
 		p := strings.SplitN(s, "/", 3)
-		// Tolerate a trailing time component after the year.
 		if i := strings.IndexByte(p[2], ' '); i > 0 {
 			p[2] = p[2][:i]
 		}

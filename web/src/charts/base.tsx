@@ -1,9 +1,6 @@
-// Shared pieces of every chart: sizing, axes, legends and the hover tooltip.
-
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ticks, type Scale } from "../lib/scale";
 
-/** Width of an element, tracked as it changes. */
 export function useWidth<T extends HTMLElement>(): [React.RefObject<T>, number] {
   const ref = useRef<T>(null);
   const [width, setWidth] = useState(0);
@@ -93,7 +90,6 @@ export function Legend({ keys }: { keys: Key[] }) {
   );
 }
 
-/** A tooltip positioned inside its chart, flipped away from the right edge. */
 export function Tip({ x, y, width, children }: { x: number; y: number; width: number; children: ReactNode }) {
   const flip = x > width * 0.6;
   return (
@@ -111,7 +107,6 @@ export function Tip({ x, y, width, children }: { x: number; y: number; width: nu
   );
 }
 
-/** The figure a chart sits in: an optional title, the plot, and a note. */
 export function Figure({ title, note, children }: { title?: ReactNode; note?: ReactNode; children: ReactNode }) {
   return (
     <figure>

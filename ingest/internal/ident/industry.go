@@ -5,16 +5,7 @@ import (
 	"strings"
 )
 
-// Industry labels filers put in front of, or beside, a borrower's name. Many
-// run their schedule together as "Aerospace & Defense Acme Holdings, LLC
-// First Lien Term Loan", with nothing to say where the industry stops and
-// the name starts. The only way to split it is to know the industries.
-//
-// The list is the GICS sectors, industry groups and industries, Moody's
-// industry classification, and the house variants that appear in filings.
-// Entries are matched on words alone, with "&" read as "and".
 var industryLabels = []string{
-	// GICS sectors and industry groups
 	"Energy", "Materials", "Industrials", "Consumer Discretionary", "Consumer Staples", "Health Care", "Healthcare",
 	"Financials", "Information Technology", "Communication Services", "Utilities", "Real Estate",
 	"Capital Goods", "Commercial & Professional Services", "Transportation", "Automobiles & Components",
@@ -25,7 +16,6 @@ var industryLabels = []string{
 	"Insurance", "Software & Services", "Technology Hardware & Equipment", "Semiconductors & Semiconductor Equipment",
 	"Telecommunication Services", "Media & Entertainment", "Equity Real Estate Investment Trusts",
 	"Real Estate Management & Development",
-	// GICS industries
 	"Energy Equipment & Services", "Oil, Gas & Consumable Fuels", "Chemicals", "Construction Materials",
 	"Containers & Packaging", "Metals & Mining", "Paper & Forest Products", "Aerospace & Defense", "Building Products",
 	"Construction & Engineering", "Electrical Equipment", "Industrial Conglomerates", "Machinery",
@@ -46,7 +36,6 @@ var industryLabels = []string{
 	"Electric Utilities", "Gas Utilities", "Multi-Utilities", "Water Utilities",
 	"Independent Power and Renewable Electricity Producers", "Diversified REITs", "Health Care REITs",
 	"Industrial REITs", "Office REITs", "Residential REITs", "Retail REITs", "Specialized REITs",
-	// GICS sub-industries that turn up
 	"Application Software", "Systems Software", "Asset Management & Custody Banks", "Insurance Brokers",
 	"Health Care Services", "Healthcare Services", "Health Care Facilities", "Health Care Distributors",
 	"Research & Consulting Services", "Human Resource & Employment Services", "Environmental & Facilities Services",
@@ -55,7 +44,6 @@ var industryLabels = []string{
 	"Trucking", "Air Freight and Logistics", "Packaged Foods & Meats", "Specialty Chemicals", "Leisure Facilities",
 	"Internet Software & Services", "Data Processing & Outsourced Services", "IT Consulting & Other Services",
 	"Property & Casualty Insurance", "Multi-Sector Holdings", "Specialized Finance", "Other Diversified Financial Services",
-	// Moody's
 	"Automotive", "Banking, Finance, Insurance & Real Estate", "Banking, Finance, Insurance and Real Estate",
 	"Beverage, Food & Tobacco", "Capital Equipment", "Chemicals, Plastics & Rubber", "Construction & Building",
 	"Consumer Goods: Durable", "Consumer Goods: Non-Durable", "Containers, Packaging & Glass", "Energy: Electricity",
@@ -64,7 +52,6 @@ var industryLabels = []string{
 	"Media: Broadcasting & Subscription", "Media: Diversified & Production", "Retail", "Services: Business",
 	"Services: Consumer", "Sovereign & Public Finance", "Telecommunications", "Transportation: Cargo",
 	"Transportation: Consumer", "Utilities: Electric", "Utilities: Oil & Gas", "Utilities: Water", "Wholesale",
-	// House variants seen in filings
 	"Business Services", "Consumer Products", "Consumer Goods", "Education", "Financial Services", "Food & Beverage",
 	"Healthcare, Education and Childcare", "Health Care Providers and Services", "Finance and Insurance",
 	"Manufacturing", "Technology", "Telecom", "Specialty Finance", "Digital Infrastructure & Services",
@@ -76,8 +63,6 @@ var industryLabels = []string{
 	"Sustainable and Renewable Technology", "Consumer & Business Services", "Information Services", "Life Sciences",
 }
 
-// industryWords holds each label as its lowercase words, longest label first,
-// so the longest match is found first.
 var industryWords = func() [][]string {
 	seen := map[string]bool{}
 	var out [][]string
@@ -93,8 +78,6 @@ var industryWords = func() [][]string {
 	return out
 }()
 
-// words lowercases a string and splits it into letter-and-digit words, with
-// "&" read as "and". It is the form industries are compared in.
 func words(s string) []string {
 	s = strings.ReplaceAll(strings.ToLower(s), "&", " and ")
 	return strings.FieldsFunc(s, func(r rune) bool {
@@ -102,9 +85,6 @@ func words(s string) []string {
 	})
 }
 
-// wordSpans returns the byte offset in s just past each of its first n words,
-// where words are as defined by `words`. It lets a match on words be turned
-// back into a cut of the original text.
 func wordEnds(s string, n int) []int {
 	var ends []int
 	in := false
@@ -112,7 +92,6 @@ func wordEnds(s string, n int) []int {
 	for i := 0; i < len(lower) && len(ends) < n; i++ {
 		c := lower[i]
 		alnum := c >= 'a' && c <= 'z' || c >= '0' && c <= '9'
-		// "&" counts as the word "and".
 		if c == '&' {
 			if in {
 				ends = append(ends, i)
@@ -136,8 +115,6 @@ func wordEnds(s string, n int) []int {
 	return ends
 }
 
-// stripIndustry removes a leading industry label, if s starts with one and
-// something is left after it. It reports whether it did.
 func stripIndustry(s string) (string, bool) {
 	w := words(s)
 	for _, ind := range industryWords {
@@ -161,8 +138,6 @@ func stripIndustry(s string) (string, bool) {
 	return s, false
 }
 
-// isIndustry reports whether a whole segment is an industry label, allowing a
-// trailing position number as in "Software & Services 2".
 func isIndustry(seg string) bool {
 	w := words(seg)
 	for len(w) > 1 && isDigits(w[len(w)-1]) {

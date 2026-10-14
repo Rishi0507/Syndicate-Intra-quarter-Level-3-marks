@@ -1,30 +1,9 @@
-//! The interface the browser calls.
-//!
-//! Plain C functions over the module's linear memory: the page allocates a
-//! buffer with `px_alloc`, writes 64-bit floats into it, calls a function and
-//! reads floats back. No generated glue, no serialisation. Every function
-//! here is a thin wrapper around code that the native tests cover, so a
-//! number on screen is a number that was tested.
-//!
-//! Row layouts, all `f64`:
-//!
-//! | array     | columns                                                        |
-//! |-----------|----------------------------------------------------------------|
-//! | dynamics  | the sixteen fields of `Dynamics`, in `Dynamics::to_vec` order   |
-//! | quarters  | grid day, year-month                                           |
-//! | marks     | year-month, as-of day, filed day, price, prev, phi, bias, noise |
-//! | sector    | year-month, available day, value, variance                     |
-//! | prints    | day, price, variance                                           |
-//! | desk      | arrival, decay, gamma, informed, inventory                     |
-//! | market    | desk (5), daily var, mark gap, mark sd, print sd, subsidy, subsidy above |
-
 use std::slice;
 
 use crate::filter::{self, Dynamics, MarkIn, PrintIn, Run, SectorIn, DYNAMICS_LEN};
 use crate::liquidity::Market;
 use crate::quote::{self, Desk};
 
-/// Allocates `len` 64-bit floats and returns the address.
 #[no_mangle]
 pub extern "C" fn px_alloc(len: usize) -> *mut f64 {
     let mut v = Vec::<f64>::with_capacity(len.max(1));
@@ -33,11 +12,6 @@ pub extern "C" fn px_alloc(len: usize) -> *mut f64 {
     p
 }
 
-/// Releases a buffer from `px_alloc`. `len` must be the length it was
-/// allocated with.
-///
-/// # Safety
-/// `ptr` must come from `px_alloc(len)` and not have been freed.
 #[no_mangle]
 pub unsafe extern "C" fn px_free(ptr: *mut f64, len: usize) {
     drop(Vec::from_raw_parts(ptr, 0, len.max(1)));
@@ -69,10 +43,6 @@ fn market_from(v: &[f64]) -> Market {
     }
 }
 
-/// Floats per mark as they cross from the browser: year-month, reporting
-/// day, filing day, price, the lender's previous price, what that previous
-/// mark implied about fair value, then the lender's smoothing, bias, distance
-/// and carry, and its number.
 pub const MARK_LEN: usize = 11;
 
 fn mark_from(m: &[f64]) -> MarkIn {
@@ -91,17 +61,6 @@ fn mark_from(m: &[f64]) -> MarkIn {
     }
 }
 
-/// Filters and smooths one loan.
-///
-/// Writes four series of `end - start + 1` values to `out`, one after the
-/// other: real-time mean, real-time standard deviation, hindsight mean,
-/// hindsight standard deviation. Writes six values per mark to `forecasts`,
-/// in the order the marks were given: public mean and sd, syndicate mean and
-/// sd, how many other marks of that date were already in, and 1 if the mark
-/// arrived too late to use. Returns 0 on success.
-///
-/// # Safety
-/// Every pointer must address at least as many floats as its length says.
 #[no_mangle]
 pub unsafe extern "C" fn px_curve(
     dynamics: *const f64,
@@ -168,24 +127,12 @@ pub unsafe extern "C" fn px_curve(
     0
 }
 
-/// Daily variance of value at price `v`, including the expected contribution
-/// of jumps over a quarter of `days_per_quarter` days. Prices are fractions
-/// of par, as everywhere in the filter.
-///
-/// # Safety
-/// `dynamics` must address seventeen floats.
 #[no_mangle]
 pub unsafe extern "C" fn px_daily_var(dynamics: *const f64, v: f64, days_per_quarter: f64) -> f64 {
     let d = Dynamics::from_slice(floats(dynamics, DYNAMICS_LEN));
     d.daily_var(v) + d.jump_prob * d.jump_sd * d.jump_sd / days_per_quarter.max(1.0)
 }
 
-/// Quotes a loan. Writes ten values to `out`: mid, bid, ask, half-spread,
-/// processing, inventory risk, adverse selection, skew, bid rate, ask rate.
-/// Units are price points.
-///
-/// # Safety
-/// `desk` must address five floats and `out` ten.
 #[no_mangle]
 pub unsafe extern "C" fn px_quote(desk: *const f64, mid: f64, sd_now: f64, daily_var: f64, out: *mut f64) {
     let q = quote::quote(&desk_from(floats(desk, 5)), mid, sd_now, daily_var);
@@ -204,18 +151,11 @@ pub unsafe extern "C" fn px_quote(desk: *const f64, mid: f64, sd_now: f64, daily
     ]);
 }
 
-/// The adverse selection half-spread per unit of standard error.
 #[no_mangle]
 pub extern "C" fn px_adverse_width(informed: f64) -> f64 {
     quote::adverse_selection_width(informed)
 }
 
-/// Rest points of the skeleton. Writes up to `max` rows of four values:
-/// standard error, full spread, trades per day, 1 if stable. Returns the
-/// number written.
-///
-/// # Safety
-/// `market` must address eleven floats and `out` four times `max`.
 #[no_mangle]
 pub unsafe extern "C" fn px_rest(market: *const f64, out: *mut f64, max: usize) -> usize {
     let m = market_from(floats(market, MARKET_LEN));
@@ -231,11 +171,6 @@ pub unsafe extern "C" fn px_rest(market: *const f64, out: *mut f64, max: usize) 
     n
 }
 
-/// For each standard error in `sd`, the arrival rate at which it is a rest
-/// point of the skeleton, with the market's own arrival rate ignored.
-///
-/// # Safety
-/// `market` must address eleven floats; `sd` and `out` must address `n`.
 #[no_mangle]
 pub unsafe extern "C" fn px_manifold(market: *const f64, sd: *const f64, n: usize, out: *mut f64) {
     let m = market_from(floats(market, MARKET_LEN));
@@ -246,11 +181,6 @@ pub unsafe extern "C" fn px_manifold(market: *const f64, sd: *const f64, n: usiz
     }
 }
 
-/// One simulated history. Writes `days` rows of six values: standard error,
-/// full spread, trade rate, trades, subsidised trades, 1 if marks landed.
-///
-/// # Safety
-/// `market` must address eleven floats and `out` six times `days`.
 #[no_mangle]
 pub unsafe extern "C" fn px_simulate(market: *const f64, sd0: f64, days: usize, seed: f64, out: *mut f64) {
     let m = market_from(floats(market, MARKET_LEN));
@@ -266,16 +196,8 @@ pub unsafe extern "C" fn px_simulate(market: *const f64, sd0: f64, days: usize, 
     }
 }
 
-/// Number of histogram bins `px_census` writes after its six summary values.
 pub const CENSUS_BINS: usize = 40;
 
-/// Long-run behaviour from one simulated history of `years` years. Writes
-/// six summary values (share of days tradeable, mean spread, median spread,
-/// trades per year, subsidy per year, largest standard error) followed by a
-/// forty-bin histogram of the standard error over zero to that largest value.
-///
-/// # Safety
-/// `market` must address eleven floats and `out` forty-six.
 #[no_mangle]
 pub unsafe extern "C" fn px_census(market: *const f64, years: usize, seed: f64, out: *mut f64) {
     let m = market_from(floats(market, MARKET_LEN));
@@ -294,7 +216,6 @@ pub unsafe extern "C" fn px_census(market: *const f64, years: usize, seed: f64, 
 mod tests {
     use super::*;
 
-    /// The pointer interface must return exactly what the typed one does.
     #[test]
     fn curve_matches_the_typed_interface() {
         let d = Dynamics::from_slice(&[
@@ -304,8 +225,8 @@ mod tests {
         let shocks: Vec<f64> = (0..n_days).map(|t| 0.01 * ((t * 7 % 11) as f64 - 5.0)).collect();
         let quarters = [63.0, 24302.0, 126.0, 24305.0];
         let marks = [
-            24302.0, 63.0, 95.0, 0.97, f64::NAN, f64::NAN, 0.2, 0.001, 0.003, 0.7, 0.0, //
-            24302.0, 63.0, 101.0, 0.955, 0.985, 0.987, 0.0, -0.002, 0.004, 0.7, 1.0, //
+            24302.0, 63.0, 95.0, 0.97, f64::NAN, f64::NAN, 0.2, 0.001, 0.003, 0.7, 0.0,
+            24302.0, 63.0, 101.0, 0.955, 0.985, 0.987, 0.0, -0.002, 0.004, 0.7, 1.0,
             24305.0, 126.0, 160.0, 0.90, 0.97, 0.969, 0.2, 0.001, 0.003, 0.7, 0.0,
         ];
         let sector = [24302.0, 100.0, -0.004, 1e-5];
@@ -344,18 +265,13 @@ mod tests {
             assert_eq!(out[k], path[k].mean);
             assert_eq!(out[n + k], path[k].sd);
         }
-        // The print pins the value on its day, in real time and in hindsight.
         assert!((out[180 - start] - 0.905).abs() < 0.003);
         assert!((out[2 * n + 180 - start] - 0.905).abs() < 0.003);
-        // Hindsight is not always the narrower band. In a quarter that turned
-        // out to contain a jump it is wider than real time was, and rightly:
-        // real time did not yet know. What must hold is that both are finite
-        // and positive everywhere.
         for k in 0..4 * n {
             assert!(out[k].is_finite() && out[k] >= 0.0);
         }
-        assert_eq!(fc[4], 0.0); // first mark of the date: nothing seen before it
-        assert_eq!(fc[10], 1.0); // second: one seen
+        assert_eq!(fc[4], 0.0);
+        assert_eq!(fc[10], 1.0);
         assert!(unsafe { px_curve(dv.as_ptr(), shocks.as_ptr(), n_days, quarters.as_ptr(), 2, marks.as_ptr(), 3, sector.as_ptr(), 1, prints.as_ptr(), 1, 10, 5, out.as_mut_ptr(), fc.as_mut_ptr()) } != 0);
     }
 
@@ -384,7 +300,6 @@ mod tests {
         let n = unsafe { px_rest(market.as_ptr(), rest.as_mut_ptr(), 5) };
         assert_eq!(n, 3);
         assert_eq!((rest[3], rest[7], rest[11]), (1.0, 0.0, 1.0));
-        // The manifold returns the market's own arrival rate at each rest point.
         let sds = [rest[0], rest[4], rest[8]];
         let mut arr = [0.0; 3];
         unsafe { px_manifold(market.as_ptr(), sds.as_ptr(), 3, arr.as_mut_ptr()) };

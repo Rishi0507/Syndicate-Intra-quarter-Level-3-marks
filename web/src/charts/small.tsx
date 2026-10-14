@@ -1,12 +1,9 @@
-// The general-purpose charts: bars, columns, lines, calibration, histogram.
-
 import { useState, type ReactNode } from "react";
 import { clamp, line, linear, nice, ticks } from "../lib/scale";
 import { Legend, Tip, useWidth, XAxis, YAxis, type Key } from "./base";
 
 const SURFACE = "var(--chart-surface)";
 
-/** Path of a bar with a rounded data end and a square foot at the baseline. */
 function barPath(x: number, y: number, w: number, h: number, horizontal: boolean): string {
   const r = Math.min(4, horizontal ? w : h, (horizontal ? h : w) / 2);
   if (horizontal) {
@@ -19,12 +16,10 @@ export interface BarRow {
   label: string;
   value: number;
   color: string;
-  /** Text at the tip of the bar; defaults to the value. */
   tag?: string;
   detail?: ReactNode;
 }
 
-/** Horizontal bars from a shared baseline, labelled at the tip. */
 export function HBars({ rows, format = (v) => v.toFixed(2), max, labelWidth = 210 }: { rows: BarRow[]; format?: (v: number) => string; max?: number; labelWidth?: number }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
@@ -71,7 +66,6 @@ export interface ColumnSeries {
   values: number[];
 }
 
-/** Vertical columns, one group per category, one column per series. */
 export function Columns({
   categories,
   series,
@@ -152,7 +146,6 @@ export interface LineSeries {
   width?: number;
 }
 
-/** Lines over a shared x, with a crosshair that reads every series at once. */
 export function Lines({
   x,
   series,
@@ -171,7 +164,6 @@ export function Lines({
   xFormat: (v: number) => string;
   yFormat?: (v: number) => string;
   yDomain?: [number, number];
-  /** Vertical ticks along the foot of the plot, such as trades. */
   marks?: { x: number; color: string }[];
   yLabel?: string;
 }) {
@@ -256,7 +248,6 @@ export function Lines({
   );
 }
 
-/** Stated coverage against achieved coverage. Honest intervals lie on the diagonal. */
 export function Calibration({ levels, series, size = 200, title }: { levels: number[]; series: { label: string; color: string; values: number[] }[]; size?: number; title?: string }) {
   const [hover, setHover] = useState<number | null>(null);
   const m = { top: title ? 22 : 8, right: 10, bottom: 30, left: 38 };
@@ -312,7 +303,6 @@ export function Calibration({ levels, series, size = 200, title }: { levels: num
   );
 }
 
-/** A distribution over evenly spaced bins from zero to `max`. */
 export function Histogram({ bins, max, color, height = 130, xFormat = (v) => v.toFixed(1), xLabel }: { bins: number[]; max: number; color: string; height?: number; xFormat?: (v: number) => string; xLabel?: string }) {
   const [ref, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);

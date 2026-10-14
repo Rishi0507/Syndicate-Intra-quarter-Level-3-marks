@@ -1,9 +1,3 @@
-//! Scores the daily estimate against the true value of every loan.
-//!
-//! Only possible on the synthetic universe, where the truth is written down.
-//! It answers the question no real data set can: between two marks, when the
-//! model says a loan is worth 96.4 give or take 0.8, is it?
-
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -16,21 +10,14 @@ use crate::stats::norm_inv;
 #[derive(Clone, Debug, Default)]
 pub struct TruthScore {
     pub n: usize,
-    /// Mean absolute and root mean squared error of the model's estimate.
     pub mae_model: f64,
     pub rmse_model: f64,
-    /// The same for the practice it replaces: the last published marks,
-    /// averaged, carried forward.
     pub mae_stale: f64,
     pub rmse_stale: f64,
-    /// Share of true values inside the model's 50%, 80%, 90% and 95% bands,
-    /// first as raw Gaussian bands and then scaled by the multipliers learned
-    /// from forecasting marks. The second is what the interface draws.
     pub cover_gaussian: [f64; 4],
     pub cover: [f64; 4],
 }
 
-/// One row per bucket of days since the last filing reached the market.
 pub struct TruthReport {
     pub all: TruthScore,
     pub by_staleness: Vec<(String, TruthScore)>,
@@ -90,9 +77,6 @@ impl Acc {
     }
 }
 
-/// Compares the real-time path of every loan with its true month-end value.
-/// `bands` holds the interval floors and multipliers learned from
-/// forecasting marks.
 pub fn score(panel: &Panel, level: &[f64], fit: &Fit, bands: &Bands, dir: &Path) -> Result<TruthReport, String> {
     let t = Table::read(&dir.join("truth_prices.tsv"))?;
     let (ck, cc, cd, cp) = (t.col("key")?, t.col("class")?, t.col("date")?, t.col("price")?);
@@ -118,18 +102,14 @@ pub fn score(panel: &Panel, level: &[f64], fit: &Fit, bands: &Bands, dir: &Path)
         let Some(series) = truth.get(&key) else { continue };
         let last_asof = r.marks.iter().map(|m| m.asof_idx).max().unwrap_or(r.start);
 
-        // Days on which a filing arrived, and the consensus it established.
         let mut filings: Vec<(usize, i32)> = r.marks.iter().map(|m| (m.filed_idx.max(m.asof_idx + 1), m.ym)).collect();
         filings.sort_unstable();
 
         for &(day, value) in series {
-            // Score only while the loan is live and after its first filing,
-            // so that a stale mark exists to compare against.
             if day < r.start || day > last_asof || day - r.start >= r.path.len() {
                 continue;
             }
             let Some(&(last_filed, _)) = filings.iter().rev().find(|f| f.0 <= day) else { continue };
-            // The newest reporting date with any mark public by this day.
             let newest = filings.iter().filter(|f| f.0 <= day).map(|f| f.1).max().unwrap();
             let public: Vec<f64> = r
                 .marks

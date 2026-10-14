@@ -5,13 +5,8 @@ import (
 	"strings"
 )
 
-// TermKey fingerprints a loan by the two terms every lender in it reports the
-// same way: the month it matures and its margin in basis points. Two names
-// that share a fingerprint are very unlikely to be different companies.
 type TermKey uint64
 
-// MakeTermKey returns the zero key when either term is missing, so partial
-// information never corroborates anything.
 func MakeTermKey(maturityYYYYMM int, spreadBp int) TermKey {
 	if maturityYYYYMM <= 0 || spreadBp <= 0 {
 		return 0
@@ -30,7 +25,6 @@ type mention struct {
 	holders map[string]struct{}
 }
 
-// Resolver accumulates every spelling of every borrower and then clusters them.
 type Resolver struct {
 	byName map[string]*mention
 	order  []*mention
@@ -38,8 +32,6 @@ type Resolver struct {
 
 func New() *Resolver { return &Resolver{byName: map[string]*mention{}} }
 
-// Add records one sighting of a borrower name by a holder. weight is the fair
-// value behind it and decides which spelling a cluster is displayed under.
 func (r *Resolver) Add(name string, aliases []string, weight float64, term TermKey, holder string) {
 	m := r.byName[name]
 	if m == nil {
@@ -75,16 +67,14 @@ func contains(xs []string, x string) bool {
 	return false
 }
 
-// Cluster is one resolved borrower.
 type Cluster struct {
 	ID      int
-	Name    string   // the spelling with the most fair value behind it
-	Key     string   // normalised core name
-	Members []string // every spelling merged into it
+	Name    string
+	Key     string
+	Members []string
 	Holders int
 }
 
-// Report counts how many merges each rule produced.
 type Report struct {
 	Mentions      int
 	Clusters      int
@@ -138,9 +128,6 @@ func sharesTerm(a, b *mention) bool {
 	return false
 }
 
-// similar reports whether two core names are close enough to be the same
-// company given independent corroboration: one contains the other, they
-// overlap heavily, or they differ by a typo.
 func similar(a, b []string) bool {
 	if len(a) == 0 || len(b) == 0 {
 		return false
@@ -160,8 +147,6 @@ func similar(a, b []string) bool {
 		small, short = len(b), b
 	}
 	if shared == small {
-		// Subset: "acme software" within "acme software solution group". A
-		// single shared word counts only if it is distinctive.
 		if small >= 2 {
 			return true
 		}
@@ -179,7 +164,6 @@ func similar(a, b []string) bool {
 	return editDistance(ja, jb, limit) <= limit
 }
 
-// editDistance is Levenshtein distance, abandoning early once it exceeds max.
 func editDistance(a, b string, max int) int {
 	if d := len(a) - len(b); d > max || -d > max {
 		return max + 1
@@ -217,25 +201,18 @@ func editDistance(a, b string, max int) int {
 	return prev[len(b)]
 }
 
-// maxBlock bounds the quadratic fuzzy pass. A block this large is a maturity
-// and margin so common that sharing it says little.
 const maxBlock = 900
 
-// generic words are too common in company names for one of them alone to
-// tie two names together.
 var generic = set("group", "capital", "health", "care", "service", "solution", "system",
 	"technology", "partner", "international", "global", "american", "national", "us",
 	"management", "financial", "medical", "software", "industry", "product", "enterprise",
 	"network", "resource", "energy", "media", "consulting", "project", "investment", "holding")
 
-// Resolve clusters every name added so far. It returns the cluster index for
-// each name, the clusters, and a breakdown of which rule made each merge.
 func (r *Resolver) Resolve() (map[string]int, []Cluster, Report) {
 	ms := r.order
 	uf := newUF(len(ms))
 	rep := Report{Mentions: len(ms)}
 
-	// 1. Identical once legal form is removed.
 	first := map[string]int{}
 	for i, m := range ms {
 		if m.strict == "" {
@@ -250,9 +227,6 @@ func (r *Resolver) Resolve() (map[string]int, []Cluster, Report) {
 		}
 	}
 
-	// 2. Identical once deal-structure words are removed. A multi-word core is
-	// trusted outright. A single word ("summit") is common enough across
-	// unrelated companies that it needs matching loan terms as well.
 	groups := map[string][]int{}
 	for i, m := range ms {
 		if m.coreKey != "" {
@@ -285,7 +259,6 @@ func (r *Resolver) Resolve() (map[string]int, []Cluster, Report) {
 		}
 	}
 
-	// 3. A disclosed alias ("dba", "fka") that names another cluster.
 	for i, m := range ms {
 		for _, a := range m.aliases {
 			toks := CoreTokens(a)
@@ -303,10 +276,6 @@ func (r *Resolver) Resolve() (map[string]int, []Cluster, Report) {
 		}
 	}
 
-	// 4. Similar names on loans with identical terms. Two lenders in one loan
-	// report the same maturity month and margin, so candidates are found by
-	// those terms and not by how the name happens to start: one lender's
-	// "Legacy.com Lotus Topco" is another's "Lotus Topco".
 	blocks := map[TermKey][]int{}
 	for i, m := range ms {
 		for t := range m.terms {
@@ -340,7 +309,6 @@ func (r *Resolver) Resolve() (map[string]int, []Cluster, Report) {
 		}
 	}
 
-	// Assemble clusters in a stable order: by first appearance of their root.
 	rootID := map[int]int{}
 	var clusters []Cluster
 	best := []float64{}

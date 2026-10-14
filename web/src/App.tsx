@@ -11,8 +11,6 @@ import { Evidence } from "./views/Evidence";
 import { Lenders } from "./views/Lenders";
 import { Market } from "./views/Market";
 
-// The method page brings the maths typesetter with it and the desk brings
-// the 3D library; each is loaded when asked for.
 const Method = lazy(() => import("./views/Method").then((m) => ({ default: m.Method })));
 const Desk = lazy(() => import("./views/Desk").then((m) => ({ default: m.Desk })));
 
@@ -24,7 +22,6 @@ const TABS: { id: View; label: string }[] = [
   { id: "method", label: "Method" },
 ];
 
-/** How long the outgoing view takes to leave, and the incoming one to settle. Matched in the stylesheet. */
 const LEAVE_MS = 170;
 const ARRIVE_MS = 640;
 
@@ -35,16 +32,10 @@ interface Loaded {
   kernel: Kernel;
 }
 
-/**
- * The tabs, with one pill that slides to whichever is current. Its position
- * is measured from the buttons, so it follows the text as fonts load and the
- * window resizes.
- */
 function Tabs({ view }: { view: View }) {
   const row = useRef<HTMLDivElement>(null);
   const buttons = useRef<(HTMLButtonElement | null)[]>([]);
   const [pill, setPill] = useState<{ x: number; w: number } | null>(null);
-  // The pill appears in place; only later moves are animated.
   const [settled, setSettled] = useState(false);
 
   useLayoutEffect(() => {
@@ -91,11 +82,6 @@ function Tabs({ view }: { view: View }) {
   );
 }
 
-/**
- * The latest day on which most of the market is still reported. Public
- * spreads are published daily and filings arrive months late, so the last
- * day of the grid shows only the few lenders that have reported since.
- */
 function latestFullDay(u: Universe): number {
   const n = u.meta.days.length;
   const change = new Int32Array(n + 1);
@@ -124,15 +110,12 @@ export function App() {
   const view = useStore((s) => s.view);
   const theme = useStore((s) => s.theme);
 
-  // The view on screen trails the one asked for by the time it takes the old
-  // one to leave. The tab pill follows the request at once.
   const [shown, setShown] = useState<View>(view);
   const [phase, setPhase] = useState<"idle" | "out" | "in">("idle");
   const [dir, setDir] = useState(1);
 
   useEffect(() => {
     if (view === shown) {
-      // Asked to come back before the old view had finished leaving.
       setPhase((p) => (p === "out" ? "in" : p));
       return;
     }
@@ -173,7 +156,6 @@ export function App() {
     };
   }, []);
 
-  // Once the data is in, let the address choose the view and the loan.
   useEffect(() => {
     if (!loaded) {
       return;
@@ -214,7 +196,6 @@ export function App() {
       <div className="shell">
         <nav className="nav glass" aria-label="Sections">
           <button className="wordmark" onClick={() => setState({ view: "market" })} aria-label={`${BRAND}, go to the market`}>
-            {/* A mark with its error bar. */}
             <svg viewBox="0 0 32 32" aria-hidden="true">
               <path d="M16 4v24M10 4h12M10 28h12" fill="none" stroke="var(--inferred)" strokeWidth="2.4" strokeLinecap="round" />
               <circle cx="16" cy="16" r="5" fill="var(--ink-1)" />

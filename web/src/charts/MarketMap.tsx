@@ -1,7 +1,3 @@
-// The market as a map: one tile for each loan, grouped by sector, sized by
-// how much is lent and coloured by what the loan is estimated to be worth.
-// It is the screen a traded market has and this one never did.
-
 import { useEffect, useMemo, useRef, useState } from "react";
 import { pathAt, type Universe } from "../lib/data";
 import { priceRgb } from "../lib/color";
@@ -28,10 +24,6 @@ interface Block extends Rect {
   tiles: Tile[];
 }
 
-/**
- * Lays weights, largest first, into a rectangle so that each gets an area in
- * proportion and stays as near square as it can (Bruls, Huizing and van Wijk).
- */
 function squarify(weights: number[], rect: Rect): Rect[] {
   const total = weights.reduce((a, b) => a + b, 0);
   const out: Rect[] = new Array(weights.length);
@@ -80,7 +72,6 @@ function squarify(weights: number[], rect: Rect): Rect[] {
   return out;
 }
 
-/** A tile's area is in proportion to the amount lent, in $ millions. A loan of unknown size is drawn small. */
 const weightOf = (size: number | null) => Math.max(size ?? 0.5, 0.5);
 
 export function MarketMap({ u, day, selected, onSelect }: { u: Universe; day: number; selected: number | null; onSelect: (loan: number) => void }) {
@@ -94,7 +85,6 @@ export function MarketMap({ u, day, selected, onSelect }: { u: Universe; day: nu
     setHeight(ref.current?.clientHeight ?? 0);
   }, [ref, width]);
 
-  // Which loans are on the map does not depend on its size; where they sit does.
   const live = useMemo(() => {
     const bySector = new Map<number, { loan: number; price: number; sd: number; weight: number }[]>();
     for (let i = 0; i < u.loans.name.length; i++) {
@@ -157,7 +147,6 @@ export function MarketMap({ u, day, selected, onSelect }: { u: Universe; day: nu
         g.fillStyle = `rgb(${Math.round(r * 255)} ${Math.round(gr * 255)} ${Math.round(bl * 255)})`;
         const gap = t.w > 3 && t.h > 3 ? 0.5 : 0;
         g.fillRect(t.x + gap, t.y + gap, t.w - 2 * gap, t.h - 2 * gap);
-        // Name and price on the tiles with room for them, in whichever ink shows.
         if (t.w > 92 && t.h > 38) {
           const lum = 0.2126 * r + 0.7152 * gr + 0.0722 * bl;
           g.fillStyle = lum > 0.42 ? "#0f1a15" : "#f1f4ef";
@@ -177,10 +166,8 @@ export function MarketMap({ u, day, selected, onSelect }: { u: Universe; day: nu
         }
       }
     }
-    // Sector names, on a plate of the page's own colour so they read on any tile.
     g.font = `600 11.5px ${family}`;
     for (const b of blocks) {
-      // A narrow block gets the first half of its name, then its first word, or none.
       let label = sectorLabel(u.meta.sectors[b.sector]);
       for (const shorter of [label.split(" and ")[0], label.split(" ")[0]]) {
         if (b.w < g.measureText(label).width + 26) {

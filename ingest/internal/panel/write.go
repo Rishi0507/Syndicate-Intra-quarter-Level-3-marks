@@ -9,7 +9,6 @@ import (
 	"strings"
 )
 
-// clean keeps free text from breaking the tab-separated layout.
 func clean(s string) string {
 	return strings.Join(strings.Fields(strings.NewReplacer("\t", " ", "\n", " ", "\r", " ").Replace(s)), " ")
 }
@@ -31,8 +30,6 @@ func writeTSV(path string, header string, n int, row func(i int, w *bufio.Writer
 	return f.Close()
 }
 
-// Write stores the panel as tab-separated tables plus a JSON report. The
-// tables are the contract with the kernel; every date is a yyyymmdd integer.
 func (p *Panel) Write(dir string) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err

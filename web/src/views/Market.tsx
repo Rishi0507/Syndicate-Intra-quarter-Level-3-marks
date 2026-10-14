@@ -137,7 +137,7 @@ export function Market({ u, kernel }: { u: Universe; kernel: Kernel }) {
       <p className="footer">
         {synthetic
           ? "This is a simulated market with a known answer, written in the SEC's file format to test the method. No real company, lender or mark appears in it."
-          : "Prices are statistical estimates made from public filings with the SEC. They are not quotes, and nothing here is investment advice. Names are read by rule from free text, and some will be wrong."}
+          : `Estimates are statistical, made from public filings with the SEC. They are not quotes, and nothing here is investment advice. Borrower names are read by rule from free text, and some will be wrong.${u.meta.lenders_named ? "" : " Lenders are identified by code."}`}
       </p>
     </div>
   );

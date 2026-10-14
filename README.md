@@ -222,6 +222,9 @@ bash scripts/pipeline.sh sec
 Alternatively, download the `*_bdc.zip` archives manually into `data/raw/sec` and run the same
 command without `SEC_CONTACT`.
 
+The SEC publishes the data sets monthly and can omit or delay a month. When `SEC_CONTACT` is set,
+the pipeline fills any uncovered month from the filings' own XBRL on EDGAR, in the same row format.
+
 The repository contains no data. The archives, the panel and the files the site reads (`data/` and
 `web/public/data/`) are generated locally by the pipeline.
 

@@ -3,8 +3,8 @@ use std::fs;
 use std::path::Path;
 
 use crate::calib::{self, Fit};
-use crate::data::{Obs, Panel};
-use crate::engine::{self, Engine, BATCH_DAYS, FULL, MIN_PEERS};
+use crate::data::{Obs, Panel, Table};
+use crate::engine::{self, Engine, BATCH_DAYS, MIN_PEERS, MODEL};
 use crate::eval::{self, LEVELS};
 use crate::insight;
 use crate::json::Json;
@@ -70,6 +70,64 @@ fn fit_json(fit: &Fit) -> Json {
         )
 }
 
+fn skill(rows: &[(f64, f64, f64)]) -> (f64, f64, f64) {
+    let n = rows.len().max(1) as f64;
+    let se0: f64 = rows.iter().map(|(p, prev, _)| (p - prev).powi(2)).sum();
+    let se: f64 = rows.iter().map(|(p, _, m)| (p - m).powi(2)).sum();
+    ((se0 / n).sqrt(), (se / n).sqrt(), if se0 > 0.0 { 1.0 - se / se0 } else { 0.0 })
+}
+
+fn vintage_json(dir: &Path) -> Json {
+    let Ok(entries) = fs::read_dir(dir) else { return Json::Null };
+    let mut names: Vec<String> = entries.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    names.sort();
+    let mut out = Vec::new();
+    for name in names {
+        let Some((y, m)) = name.split_once('-') else { continue };
+        let (Ok(y), Ok(m)) = (y.parse::<i32>(), m.parse::<i32>()) else { continue };
+        let Ok(t) = Table::read(&dir.join(&name).join("records.tsv")) else { continue };
+        let (Ok(cp), Ok(cv), Ok(cm), Ok(cs)) = (t.col("price"), t.col("prev"), t.col("model"), t.col("seen")) else { continue };
+        let rows: Vec<(f64, f64, f64, bool)> = (0..t.len()).map(|r| (t.num(r, cp), t.num(r, cv), t.num(r, cm), t.int(r, cs) > 0)).collect();
+        let all: Vec<(f64, f64, f64)> = rows.iter().map(|r| (r.0, r.1, r.2)).collect();
+        let peers: Vec<(f64, f64, f64)> = rows.iter().filter(|r| r.3).map(|r| (r.0, r.1, r.2)).collect();
+        let (stale, model, sk) = skill(&all);
+        let (peer_stale, peer_model, peer_sk) = skill(&peers);
+        out.push(
+            Json::obj()
+                .with("ym", y * 12 + m - 1)
+                .with("n", all.len())
+                .with("followers", peers.len())
+                .with("stale", Json::round(stale * 100.0, 4))
+                .with("model", Json::round(model * 100.0, 4))
+                .with("skill", Json::round(sk, 4))
+                .with("followers_stale", Json::round(peer_stale * 100.0, 4))
+                .with("followers_model", Json::round(peer_model * 100.0, 4))
+                .with("followers_skill", Json::round(peer_sk, 4)),
+        );
+    }
+    if out.is_empty() {
+        Json::Null
+    } else {
+        Json::Arr(out)
+    }
+}
+
+fn audit_json(build: &Path) -> Json {
+    let mut out = Json::obj();
+    if let Ok(t) = Table::read(&build.join("audit.tsv")) {
+        if let (Ok(cm), Ok(cv)) = (t.col("measure"), t.col("value")) {
+            let mut facts = Json::obj();
+            for r in 0..t.len() {
+                let v = t.num(r, cv);
+                facts = facts.with(t.str(r, cm), if v.is_finite() { Json::from(v) } else { Json::from(t.str(r, cv)) });
+            }
+            out = out.with("ingest", facts);
+        }
+    }
+    let vintage = build.parent().map(|p| p.join("vintage")).map(|d| vintage_json(&d)).unwrap_or(Json::Null);
+    out.with("vintage", vintage)
+}
+
 pub struct Summary {
     pub loans: usize,
     pub marks: usize,
@@ -97,7 +155,7 @@ pub fn export(build: &Path, out: &Path, factor: &str, min_train: usize, log: &mu
     let eng = Engine::new(&panel, &level);
     let grid_end = panel.days.len() - 1;
     let insts: Vec<usize> = (0..panel.instruments.len()).collect();
-    let (runs, book) = eng.run_with_book(&fit, FULL, &insts, &|_: &Obs| true, grid_end, true);
+    let (runs, book) = eng.run_with_book(&fit, MODEL, &insts, &|_: &Obs| true, grid_end, true);
 
     let truth = if panel.source == "synthetic" && build.join("truth_prices.tsv").exists() {
         log("scoring against the answer key");
@@ -335,7 +393,8 @@ pub fn export(build: &Path, out: &Path, factor: &str, min_train: usize, log: &mu
         )
         .with("eval", eval::report(&records))
         .with("truth", truth_json)
-        .with("insight", insight::report(&panel));
+        .with("insight", insight::report(&panel))
+        .with("audit", audit_json(build));
 
     {
         let mut order: Vec<usize> = (0..runs.len()).collect();

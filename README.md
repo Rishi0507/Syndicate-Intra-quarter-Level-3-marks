@@ -146,6 +146,53 @@ data.
 
 `syndicate backtest data/synth/build` and `syndicate truth data/synth/build` reproduce these results.
 
+## Web application
+
+![Market map: one tile per loan, sized by amount lent and coloured by estimated price](docs/map.jpg)
+
+The interface is a static site with five pages.
+
+| Page     | Content                                                                                                                                                                                                      |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Market   | One loan in focus: the current estimate and its 90% band, the daily estimate against every filed mark, and an indicative bid and ask. Below it, the full market as a treemap, one tile per loan, coloured by price. |
+| Lenders  | How each manager marks: timeliness, level relative to peers and distance from consensus.                                                                                                                     |
+| Desk     | Decomposition of the spread, and the feedback between trading and information.                                                                                                                               |
+| Evidence | Every result in this document, with charts.                                                                                                                                                                  |
+| Method   | The full mathematical specification.                                                                                                                                                                         |
+
+Every page and loan has its own address (`#/desk`, `#/loan/412`). Light and dark themes are
+supported and the selection persists between visits. Each page states whether it is displaying SEC
+filings or the synthetic market.
+
+![Market page in the dark theme](docs/dark.jpg)
+
+## Architecture
+
+```mermaid
+flowchart LR
+    SEC["SEC BDC<br/>data sets"] --> ING
+    FRED["FRED credit<br/>spreads"] --> ING
+    SYN["Synthetic<br/>market"] --> ING
+    ING["Ingest<br/>(Go)"] --> PANEL["Panel<br/>of marks"]
+    PANEL --> KER["Kernel<br/>(Rust, native)"]
+    KER --> FILES["Static<br/>files"]
+    FILES --> WEB["Web app<br/>(React)"]
+    WASM["Kernel<br/>(WebAssembly)"] --> WEB
+```
+
+| Component | Language                       | Responsibility                                                                                                                                                           |
+| --------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `ingest`  | Go, standard library only      | Streams the Schedule of Investments out of each archive without unpacking it, parses identifiers, resolves borrowers, writes the panel and generates synthetic markets. |
+| `kernel`  | Rust, no external dependencies | Filter, estimation, walk-forward backtest, quote and liquidity model. One source builds a native command-line program and a 145 KB WebAssembly module.                  |
+| `web`     | TypeScript, React, three.js    | Static interface. Every curve and quote is computed in the browser by the WebAssembly kernel from the exported marks.                                                   |
+
+The browser and native builds are checked against each other: across 12,187 loan-days they agree to
+3 parts in 10 million, the precision of the single-precision marks that cross the wire. The full fit,
+ten-quarter backtest and export of the real panel completes in about nine seconds.
+
+Component diagrams, data flow and the build process are described in
+[docs/architecture.md](docs/architecture.md).
+
 ## Data
 
 The SEC's [BDC data sets](https://www.sec.gov/data-research/sec-markets-data/bdc-data-sets) carry
@@ -173,3 +220,42 @@ single borrower and seniority can conceal a first-out and a last-out piece, or n
 restructuring. Each case is handled by an explicit rule, and `data/build/ingest_report.json` counts
 the effect of every rule on every row. Of 1.84 million rows, 851,299 restate an earlier date in a
 later filing, 662,326 are dropped and 328,783 are kept.
+
+The cleaning rules and the panel schema are documented in [docs/data.md](docs/data.md).
+
+## Getting started
+
+### Prerequisites
+
+- Go 1.22 or later
+- Rust (stable) with the `wasm32-unknown-unknown` target
+- Node.js 20 or later
+
+### Build and run
+
+```sh
+bash scripts/pipeline.sh synthetic     # synthetic market; no download required
+bash scripts/pipeline.sh sec           # SEC filings; see Data
+cd web && npm install && npm run dev   # http://127.0.0.1:5173
+```
+
+### Test
+
+```sh
+bash scripts/test.sh                   # Go tests, Rust tests, type check, browser against native
+cd web && npm run build                # static site in web/dist
+```
+
+`scripts/cargo.sh` runs cargo against the kernel manifest from anywhere in the repository. It uses
+`CARGO_HOME` and `RUSTUP_HOME` when they are set, for toolchains installed outside the default
+location.
+
+## Repository layout
+
+```text
+ingest/    Go          fetch, parse identifiers, resolve borrowers, build the panel, synthetic markets
+kernel/    Rust        filter, calibration, engine, evaluation, quote, liquidity, WebAssembly interface
+web/       TypeScript  views, charts, data loading and kernel bindings
+scripts/   Bash        pipeline.sh, test.sh, cargo.sh
+docs/                  architecture, methodology, data notes and screenshots
+```

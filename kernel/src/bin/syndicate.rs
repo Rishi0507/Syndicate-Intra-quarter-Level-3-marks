@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::exit;
 
-use syndicate_kernel::calib::{self, Fit};
+use syndicate_kernel::calib::{self, Fit, PARTS};
 use syndicate_kernel::data::{Obs, Panel};
 use syndicate_kernel::engine::{self, Record};
 use syndicate_kernel::eval;
@@ -135,6 +135,16 @@ fn main() {
             eval::print_ladder("All forecasts, price points", &all);
             let followers: Vec<&Record> = records.iter().filter(|r| r.seen > 0).collect();
             eval::print_ladder("Another lender had already filed", &followers);
+            eval::print_rules("Against simple rules, all forecasts", &all);
+            eval::print_rules("Against simple rules, another lender had already filed", &followers);
+            for flag in [true, false] {
+                let sel: Vec<&Record> = followers.iter().copied().filter(|r| r.lockstep == flag).collect();
+                eval::print_rules(
+                    if flag { "Peer filed, lender's marks of the loan have matched another's exactly" } else { "Peer filed, marks never matched exactly" },
+                    &sel,
+                );
+            }
+            eval::print_ablations(&all, &followers);
             for regime in eval::REGIMES {
                 let sel: Vec<&Record> = records.iter().filter(|r| eval::Regime::of(r.prev) == regime).collect();
                 eval::print_ladder(&format!("Regime: {}", regime.label()), &sel);
@@ -157,14 +167,19 @@ fn main() {
             if !books.is_empty() {
                 let sst: f64 = books.iter().map(|b| b.actual * b.actual).sum();
                 let sse: f64 = books.iter().map(|b| (b.actual - b.model).powi(2)).sum();
+                let ssr: f64 = books.iter().map(|b| (b.actual - b.rule).powi(2)).sum();
                 let moved: Vec<&eval::Book> = books.iter().filter(|b| b.actual.abs() >= 0.005).collect();
+                let fell = moved.iter().filter(|b| b.actual < 0.0).count();
                 println!(
-                    "\n  Lender books, {} or more loans: {} books, {:.1}% of the squared change anticipated, direction right in {} of {} that moved half a point",
+                    "\n  Lender books, {} or more loans: {} books, {:.1}% of the squared change anticipated (rule {:.1}%), direction right in {} of {} that moved half a point (rule {}, always the commoner direction {})",
                     eval::MIN_BOOK,
                     books.len(),
                     (1.0 - sse / sst) * 100.0,
+                    (1.0 - ssr / sst) * 100.0,
                     moved.iter().filter(|b| b.actual * b.model > 0.0).count(),
-                    moved.len()
+                    moved.len(),
+                    moved.iter().filter(|b| b.actual * b.rule > 0.0).count(),
+                    fell.max(moved.len() - fell)
                 );
             }
             if let Some(path) = out {
@@ -172,10 +187,14 @@ fn main() {
                 eprintln!("wrote {path}");
             }
             if let Some(path) = args.iter().position(|a| a == "--records").and_then(|i| args.get(i + 1)) {
-                let mut rows = String::from("inst\tfamily\tym\tprice\tprev\tpublic_raw\tpublic\tmodel\tsd\tsector\tseen\tprincipal\tfiled\n");
+                let mut rows = String::from("inst\tfamily\tym\tprice\tprev\tpublic_raw\tpublic\tmodel\tsd\tsector\tcopy\trule\tcombined\tlockstep\tseen\tprincipal\tfiled");
+                for (_, id, _) in &PARTS {
+                    rows.push_str(&format!("\twithout_{id}"));
+                }
+                rows.push('\n');
                 for r in &records {
                     rows.push_str(&format!(
-                        "{}\t{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{}\t{:.0}\t{}\n",
+                        "{}\t{}\t{}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{:.6}\t{}\t{}\t{:.0}\t{}",
                         r.inst,
                         r.family,
                         r.ym,
@@ -186,10 +205,18 @@ fn main() {
                         r.peers.0,
                         r.peers.1,
                         r.sector.0,
+                        r.copy,
+                        r.rule,
+                        r.combined,
+                        u8::from(r.lockstep),
                         r.seen,
                         r.principal,
                         r.filed
                     ));
+                    for x in &r.parts {
+                        rows.push_str(&format!("\t{x:.6}"));
+                    }
+                    rows.push('\n');
                 }
                 std::fs::write(path, rows).unwrap_or_else(|e| die(format!("{path}: {e}")));
                 eprintln!("wrote {path}");

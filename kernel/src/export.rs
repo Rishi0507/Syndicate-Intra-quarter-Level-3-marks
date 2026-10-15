@@ -77,33 +77,75 @@ fn skill(rows: &[(f64, f64, f64)]) -> (f64, f64, f64) {
     ((se0 / n).sqrt(), (se / n).sqrt(), if se0 > 0.0 { 1.0 - se / se0 } else { 0.0 })
 }
 
+struct VintageRow {
+    price: f64,
+    prev: f64,
+    model: f64,
+    rule: f64,
+    peer: bool,
+}
+
 fn vintage_json(dir: &Path) -> Json {
     let Ok(entries) = fs::read_dir(dir) else { return Json::Null };
     let mut names: Vec<String> = entries.filter_map(|e| e.ok()).map(|e| e.file_name().to_string_lossy().into_owned()).collect();
     names.sort();
-    let mut out = Vec::new();
+    let mut quarters: Vec<(i32, Vec<VintageRow>, bool)> = Vec::new();
     for name in names {
         let Some((y, m)) = name.split_once('-') else { continue };
         let (Ok(y), Ok(m)) = (y.parse::<i32>(), m.parse::<i32>()) else { continue };
         let Ok(t) = Table::read(&dir.join(&name).join("records.tsv")) else { continue };
         let (Ok(cp), Ok(cv), Ok(cm), Ok(cs)) = (t.col("price"), t.col("prev"), t.col("model"), t.col("seen")) else { continue };
-        let rows: Vec<(f64, f64, f64, bool)> = (0..t.len()).map(|r| (t.num(r, cp), t.num(r, cv), t.num(r, cm), t.int(r, cs) > 0)).collect();
-        let all: Vec<(f64, f64, f64)> = rows.iter().map(|r| (r.0, r.1, r.2)).collect();
-        let peers: Vec<(f64, f64, f64)> = rows.iter().filter(|r| r.3).map(|r| (r.0, r.1, r.2)).collect();
-        let (stale, model, sk) = skill(&all);
-        let (peer_stale, peer_model, peer_sk) = skill(&peers);
-        out.push(
-            Json::obj()
-                .with("ym", y * 12 + m - 1)
-                .with("n", all.len())
-                .with("followers", peers.len())
-                .with("stale", Json::round(stale * 100.0, 4))
-                .with("model", Json::round(model * 100.0, 4))
-                .with("skill", Json::round(sk, 4))
-                .with("followers_stale", Json::round(peer_stale * 100.0, 4))
-                .with("followers_model", Json::round(peer_model * 100.0, 4))
-                .with("followers_skill", Json::round(peer_sk, 4)),
-        );
+        let cr = t.col("rule").ok();
+        let rows = (0..t.len())
+            .map(|r| VintageRow {
+                price: t.num(r, cp),
+                prev: t.num(r, cv),
+                model: t.num(r, cm),
+                rule: cr.map_or(f64::NAN, |c| t.num(r, c)),
+                peer: t.int(r, cs) > 0,
+            })
+            .collect();
+        quarters.push((y * 12 + m - 1, rows, cr.is_some()));
+    }
+    let mut out = Vec::new();
+    for (k, (ym, rows, has_rule)) in quarters.iter().enumerate() {
+        let earlier: Vec<(f64, f64, f64)> =
+            quarters[..k].iter().flat_map(|q| q.1.iter()).filter(|r| r.peer && r.rule.is_finite()).map(|r| (r.price, r.model, r.rule)).collect();
+        let w = engine::rule_weight(&earlier);
+        let combined = |r: &VintageRow| if r.peer && r.rule.is_finite() { r.model + w * (r.rule - r.model) } else { r.model };
+        let pick = |sel: &dyn Fn(&VintageRow) -> bool, f: &dyn Fn(&VintageRow) -> f64| -> Vec<(f64, f64, f64)> {
+            rows.iter().filter(|r| sel(r)).map(|r| (r.price, r.prev, f(r))).collect()
+        };
+        let (all, peers) = (|_: &VintageRow| true, |r: &VintageRow| r.peer);
+        let (stale, model, sk) = skill(&pick(&all, &|r| r.model));
+        let (peer_stale, peer_model, peer_sk) = skill(&pick(&peers, &|r| r.model));
+        let mut row = Json::obj()
+            .with("ym", *ym)
+            .with("n", rows.len())
+            .with("followers", rows.iter().filter(|r| r.peer).count())
+            .with("stale", Json::round(stale * 100.0, 4))
+            .with("model", Json::round(model * 100.0, 4))
+            .with("skill", Json::round(sk, 4))
+            .with("followers_stale", Json::round(peer_stale * 100.0, 4))
+            .with("followers_model", Json::round(peer_model * 100.0, 4))
+            .with("followers_skill", Json::round(peer_sk, 4));
+        if *has_rule {
+            let (_, rule, rule_sk) = skill(&pick(&all, &|r| r.rule));
+            let (_, peer_rule, peer_rule_sk) = skill(&pick(&peers, &|r| r.rule));
+            let (_, comb, comb_sk) = skill(&pick(&all, &combined));
+            let (_, peer_comb, peer_comb_sk) = skill(&pick(&peers, &combined));
+            row = row
+                .with("rule", Json::round(rule * 100.0, 4))
+                .with("rule_skill", Json::round(rule_sk, 4))
+                .with("followers_rule", Json::round(peer_rule * 100.0, 4))
+                .with("followers_rule_skill", Json::round(peer_rule_sk, 4))
+                .with("weight", Json::round(w, 4))
+                .with("combined", Json::round(comb * 100.0, 4))
+                .with("combined_skill", Json::round(comb_sk, 4))
+                .with("followers_combined", Json::round(peer_comb * 100.0, 4))
+                .with("followers_combined_skill", Json::round(peer_comb_sk, 4));
+        }
+        out.push(row);
     }
     if out.is_empty() {
         Json::Null

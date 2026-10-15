@@ -1,3 +1,4 @@
+use crate::calib::PARTS;
 use crate::engine::Record;
 use crate::json::Json;
 use crate::stats::{norm_cdf, norm_inv};
@@ -31,24 +32,53 @@ impl Regime {
     }
 }
 
-pub const RUNGS: [(&str, &str); 4] = [
-    ("stale", "Last mark carried forward"),
-    ("public_raw", "Rolled forward with public spreads and pull to par"),
-    ("public", "With each lender's habits modelled"),
-    ("peers", "With other lenders' marks of the same loan"),
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pick {
+    Stale,
+    PublicRaw,
+    Public,
+    Model,
+    Sector,
+    Part(usize),
+    Copy,
+    Rule,
+    Combined,
+}
+
+pub const RUNGS: [(Pick, &str, &str); 4] = [
+    (Pick::Stale, "stale", "Last mark carried forward"),
+    (Pick::PublicRaw, "public_raw", "Rolled forward with public spreads and pull to par"),
+    (Pick::Public, "public", "With each lender's habits modelled"),
+    (Pick::Model, "peers", "With other lenders' marks of the same loan"),
 ];
 
-pub const MODEL_RUNG: usize = 3;
+pub const RULES: [(Pick, &str, &str); 5] = [
+    (Pick::Stale, "stale", "Last mark carried forward"),
+    (Pick::Copy, "copy", "Other lenders' marks of the same quarter"),
+    (Pick::Rule, "rule", "Last mark moved by other lenders' change"),
+    (Pick::Model, "model", "The model"),
+    (Pick::Combined, "combined", "Model and rule combined"),
+];
 
-pub const ABLATIONS: [(&str, &str); 1] = [("sector", "Adding sector repricing from other loans")];
+pub const ADDITIONS: [(Pick, &str, &str); 1] = [(Pick::Sector, "sector", "Sector repricing from other loans")];
 
-fn point(r: &Record, rung: usize) -> f64 {
-    match rung {
-        0 => r.prev,
-        1 => r.public_raw.0,
-        2 => r.public.0,
-        3 => r.peers.0,
-        _ => r.sector.0,
+pub fn point(r: &Record, pick: Pick) -> f64 {
+    match pick {
+        Pick::Stale => r.prev,
+        Pick::PublicRaw => r.public_raw.0,
+        Pick::Public => r.public.0,
+        Pick::Model => r.peers.0,
+        Pick::Sector => r.sector.0,
+        Pick::Part(k) => r.parts[k],
+        Pick::Copy => {
+            if r.copy.is_finite() {
+                r.copy
+            } else {
+                r.prev
+            }
+        }
+        Pick::Rule => r.rule,
+        Pick::Combined => r.combined,
     }
 }
 
@@ -60,19 +90,98 @@ pub struct Score {
     pub skill: f64,
 }
 
-fn score(records: &[&Record], rung: usize) -> Score {
+pub fn score(records: &[&Record], pick: Pick) -> Score {
     if records.is_empty() {
         return Score::default();
     }
     let (mut ae, mut se, mut se0) = (0.0, 0.0, 0.0);
     for r in records {
-        let e = r.price - point(r, rung);
+        let e = r.price - point(r, pick);
         ae += e.abs();
         se += e * e;
         se0 += (r.price - r.prev).powi(2);
     }
     let n = records.len() as f64;
     Score { n: records.len(), mae: ae / n, rmse: (se / n).sqrt(), skill: if se0 > 0.0 { 1.0 - se / se0 } else { 0.0 } }
+}
+
+pub const TIE: f64 = 0.0005;
+pub const CAP: f64 = 0.05;
+pub const TOP_SHARE: f64 = 0.01;
+
+#[derive(Clone, Debug, Default)]
+pub struct Robust {
+    pub median_ae: f64,
+    pub closer: f64,
+    pub further: f64,
+    pub capped_skill: f64,
+    pub top_share: f64,
+}
+
+pub fn robust(records: &[&Record], pick: Pick) -> Robust {
+    if records.is_empty() {
+        return Robust::default();
+    }
+    let n = records.len() as f64;
+    let mut ae: Vec<f64> = Vec::with_capacity(records.len());
+    let mut gains: Vec<f64> = Vec::with_capacity(records.len());
+    let (mut closer, mut further, mut capped, mut capped0) = (0usize, 0usize, 0.0, 0.0);
+    for r in records {
+        let (e, e0) = ((r.price - point(r, pick)).abs(), (r.price - r.prev).abs());
+        ae.push(e);
+        if e < e0 - TIE {
+            closer += 1;
+        } else if e > e0 + TIE {
+            further += 1;
+        }
+        capped += e.min(CAP).powi(2);
+        capped0 += e0.min(CAP).powi(2);
+        gains.push(e0 * e0 - e * e);
+    }
+    let net: f64 = gains.iter().sum();
+    gains.sort_by(|a, b| b.total_cmp(a));
+    let top = ((n * TOP_SHARE).ceil() as usize).max(1);
+    Robust {
+        median_ae: median_of(&ae),
+        closer: closer as f64 / n,
+        further: further as f64 / n,
+        capped_skill: if capped0 > 0.0 { 1.0 - capped / capped0 } else { 0.0 },
+        top_share: if net > 0.0 { gains[..top].iter().sum::<f64>() / net } else { f64::NAN },
+    }
+}
+
+pub const DRAWS: usize = 1000;
+pub const SEED: u64 = 2026;
+
+pub fn interval(records: &[&Record], a: Pick, b: Pick) -> (f64, f64) {
+    let mut loans: std::collections::HashMap<usize, [f64; 3]> = std::collections::HashMap::new();
+    for r in records {
+        let s = loans.entry(r.inst).or_default();
+        s[0] += (r.price - r.prev).powi(2);
+        s[1] += (r.price - point(r, a)).powi(2);
+        s[2] += (r.price - point(r, b)).powi(2);
+    }
+    let mut keys: Vec<usize> = loans.keys().copied().collect();
+    keys.sort_unstable();
+    let sums: Vec<[f64; 3]> = keys.iter().map(|k| loans[k]).collect();
+    if sums.len() < 2 {
+        return (f64::NAN, f64::NAN);
+    }
+    let mut rng = crate::stats::Rng::new(SEED);
+    let mut diffs: Vec<f64> = (0..DRAWS)
+        .filter_map(|_| {
+            let mut t = [0.0; 3];
+            for _ in 0..sums.len() {
+                let s = &sums[(rng.uniform() * sums.len() as f64) as usize % sums.len()];
+                for k in 0..3 {
+                    t[k] += s[k];
+                }
+            }
+            (t[0] > 0.0).then(|| (t[2] - t[1]) / t[0])
+        })
+        .collect();
+    diffs.sort_by(|x, y| x.total_cmp(y));
+    (exact_quantile(&mut diffs.clone(), 0.05), exact_quantile(&mut diffs, 0.95))
 }
 
 pub const LEVELS: [f64; 4] = [0.50, 0.80, 0.90, 0.95];
@@ -254,20 +363,56 @@ fn score_json(s: &Score) -> Json {
 }
 
 fn ladder(records: &[&Record]) -> Json {
-    Json::Arr(
-        RUNGS
-            .iter()
-            .enumerate()
-            .map(|(k, (id, label))| score_json(&score(records, k)).with("id", *id).with("label", *label))
-            .collect(),
-    )
+    Json::Arr(RUNGS.iter().map(|&(pick, id, label)| score_json(&score(records, pick)).with("id", id).with("label", label)).collect())
+}
+
+fn rule_row(records: &[&Record], pick: Pick, id: &str, label: &str) -> Json {
+    let r = robust(records, pick);
+    let (lo, hi) = if pick == Pick::Stale { (0.0, 0.0) } else { interval(records, pick, Pick::Stale) };
+    score_json(&score(records, pick))
+        .with("id", id)
+        .with("label", label)
+        .with("skill_lo", Json::round(lo, 4))
+        .with("skill_hi", Json::round(hi, 4))
+        .with("median_ae", Json::round(r.median_ae * 100.0, 4))
+        .with("closer", Json::round(r.closer, 4))
+        .with("further", Json::round(r.further, 4))
+        .with("capped_skill", Json::round(r.capped_skill, 4))
+        .with("top_share", Json::round(r.top_share, 4))
+}
+
+fn versus(records: &[&Record]) -> Json {
+    let rows = Json::Arr(RULES.iter().map(|&(pick, id, label)| rule_row(records, pick, id, label)).collect());
+    let (model, rule) = (score(records, Pick::Model), score(records, Pick::Rule));
+    let (lo, hi) = interval(records, Pick::Model, Pick::Rule);
+    Json::obj()
+        .with("rows", rows)
+        .with("model_less_rule", Json::round(model.skill - rule.skill, 4))
+        .with("model_less_rule_lo", Json::round(lo, 4))
+        .with("model_less_rule_hi", Json::round(hi, 4))
+}
+
+fn lockstep_report(records: &[&Record]) -> Json {
+    let group = |flag: bool| -> Json {
+        let sel: Vec<&Record> = records.iter().copied().filter(|r| r.lockstep == flag).collect();
+        let (model, rule) = (score(&sel, Pick::Model), score(&sel, Pick::Rule));
+        Json::obj()
+            .with("n", sel.len())
+            .with("stale_rmse", Json::round(score(&sel, Pick::Stale).rmse * 100.0, 4))
+            .with("model_skill", Json::round(model.skill, 4))
+            .with("rule_skill", Json::round(rule.skill, 4))
+            .with("model_mae", Json::round(model.mae * 100.0, 4))
+            .with("rule_mae", Json::round(rule.mae * 100.0, 4))
+    };
+    Json::obj().with("lockstep", group(true)).with("independent", group(false))
 }
 
 pub const SIGNAL_EDGES: [f64; 5] = [0.0, 0.0025, 0.01, 0.03, f64::INFINITY];
 
 fn signal_row(label: &str, records: &[&Record]) -> Json {
-    let stale = score(records, 0);
-    let model = score(records, MODEL_RUNG);
+    let stale = score(records, Pick::Stale);
+    let model = score(records, Pick::Model);
+    let rule = score(records, Pick::Rule);
     Json::obj()
         .with("label", label)
         .with("n", records.len())
@@ -276,6 +421,8 @@ fn signal_row(label: &str, records: &[&Record]) -> Json {
         .with("mae", Json::round(model.mae * 100.0, 4))
         .with("rmse", Json::round(model.rmse * 100.0, 4))
         .with("skill", Json::round(model.skill, 4))
+        .with("rule_mae", Json::round(rule.mae * 100.0, 4))
+        .with("rule_skill", Json::round(rule.skill, 4))
 }
 
 fn by_signal(records: &[Record]) -> Json {
@@ -302,6 +449,7 @@ pub struct Book {
     pub actual: f64,
     pub model: f64,
     pub habits: f64,
+    pub rule: f64,
     pub peer_share: f64,
 }
 
@@ -325,6 +473,7 @@ pub fn books(records: &[Record]) -> Vec<Book> {
                 actual: avg(&|r| r.price - r.prev),
                 model: avg(&|r| r.model().0 - r.prev),
                 habits: avg(&|r| r.public.0 - r.prev),
+                rule: avg(&|r| r.rule - r.prev),
                 peer_share: avg(&|r| if r.seen > 0 { 1.0 } else { 0.0 }),
             })
         })
@@ -336,8 +485,11 @@ fn book_score(bs: &[&Book]) -> Json {
     let sst: f64 = bs.iter().map(|b| b.actual * b.actual).sum();
     let sse: f64 = bs.iter().map(|b| (b.actual - b.model).powi(2)).sum();
     let ssh: f64 = bs.iter().map(|b| (b.actual - b.habits).powi(2)).sum();
+    let ssr: f64 = bs.iter().map(|b| (b.actual - b.rule).powi(2)).sum();
     let moved: Vec<&&Book> = bs.iter().filter(|b| b.actual.abs() >= 0.005).collect();
     let right = moved.iter().filter(|b| b.actual * b.model > 0.0).count();
+    let rule_right = moved.iter().filter(|b| b.actual * b.rule > 0.0).count();
+    let fell = moved.iter().filter(|b| b.actual < 0.0).count();
     let mean = |f: &dyn Fn(&Book) -> f64| bs.iter().map(|b| f(b)).sum::<f64>() / n.max(1) as f64;
     let (ma, mm) = (mean(&|b| b.actual), mean(&|b| b.model));
     let cov: f64 = bs.iter().map(|b| (b.actual - ma) * (b.model - mm)).sum();
@@ -347,11 +499,15 @@ fn book_score(bs: &[&Book]) -> Json {
         .with("n", n)
         .with("skill", Json::round(if sst > 0.0 { 1.0 - sse / sst } else { f64::NAN }, 4))
         .with("habits_skill", Json::round(if sst > 0.0 { 1.0 - ssh / sst } else { f64::NAN }, 4))
+        .with("rule_skill", Json::round(if sst > 0.0 { 1.0 - ssr / sst } else { f64::NAN }, 4))
         .with("correlation", Json::round(if va > 0.0 && vm > 0.0 { cov / (va * vm).sqrt() } else { f64::NAN }, 4))
         .with("mean_abs_change", Json::round(mean(&|b| b.actual.abs()) * 100.0, 4))
         .with("mean_abs_error", Json::round(mean(&|b| (b.actual - b.model).abs()) * 100.0, 4))
         .with("moved", moved.len())
         .with("direction_right", right)
+        .with("rule_direction_right", rule_right)
+        .with("fell", fell)
+        .with("majority_right", fell.max(moved.len() - fell))
 }
 
 pub fn book_report(records: &[Record]) -> Json {
@@ -372,18 +528,38 @@ pub fn book_report(records: &[Record]) -> Json {
     book_score(&refs).with("min_loans", MIN_BOOK).with("by_peer_share", by_share).with("points", points)
 }
 
-fn ablations(records: &[&Record]) -> Json {
-    let model = score(records, MODEL_RUNG);
+pub fn latest_weight(records: &[Record]) -> f64 {
+    let rows: Vec<(f64, f64, f64)> = records.iter().filter(|r| r.seen > 0).map(|r| (r.price, r.peers.0, r.rule)).collect();
+    crate::engine::rule_weight(&rows)
+}
+
+pub fn variants() -> Vec<(Pick, &'static str, &'static str, &'static str)> {
+    let removed = PARTS.iter().enumerate().map(|(k, &(_, id, label))| (Pick::Part(k), id, label, "removed"));
+    let added = ADDITIONS.iter().map(|&(pick, id, label)| (pick, id, label, "added"));
+    removed.chain(added).collect()
+}
+
+fn ablations(all: &[&Record], followers: &[&Record]) -> Json {
+    let (model_all, model_peers) = (score(all, Pick::Model), score(followers, Pick::Model));
+    let change = |s: &Score, m: &Score| if m.rmse > 0.0 { s.rmse / m.rmse - 1.0 } else { 0.0 };
     Json::Arr(
-        ABLATIONS
-            .iter()
-            .enumerate()
-            .map(|(k, (id, label))| {
-                let s = score(records, RUNGS.len() + k);
-                score_json(&s)
-                    .with("id", *id)
-                    .with("label", *label)
-                    .with("rmse_change", Json::round(if model.rmse > 0.0 { s.rmse / model.rmse - 1.0 } else { 0.0 }, 6))
+        variants()
+            .into_iter()
+            .map(|(pick, id, label, kind)| {
+                let (a, f) = (score(all, pick), score(followers, pick));
+                let (lo, hi) = interval(all, Pick::Model, pick);
+                Json::obj()
+                    .with("id", id)
+                    .with("label", label)
+                    .with("kind", kind)
+                    .with("all", score_json(&a))
+                    .with("followers", score_json(&f))
+                    .with("rmse_change", Json::round(change(&a, &model_all), 6))
+                    .with("followers_rmse_change", Json::round(change(&f, &model_peers), 6))
+                    .with("skill_change", Json::round(a.skill - model_all.skill, 4))
+                    .with("followers_skill_change", Json::round(f.skill - model_peers.skill, 4))
+                    .with("worth_lo", Json::round(lo, 4))
+                    .with("worth_hi", Json::round(hi, 4))
             })
             .collect(),
     )
@@ -431,11 +607,15 @@ pub fn report(records: &[Record]) -> Json {
             Json::obj()
                 .with("ym", q)
                 .with("n", sel.len())
-                .with("stale", Json::round(score(&sel, 0).rmse * 100.0, 4))
-                .with("model", Json::round(score(&sel, MODEL_RUNG).rmse * 100.0, 4))
+                .with("stale", Json::round(score(&sel, Pick::Stale).rmse * 100.0, 4))
+                .with("model", Json::round(score(&sel, Pick::Model).rmse * 100.0, 4))
+                .with("rule", Json::round(score(&sel, Pick::Rule).rmse * 100.0, 4))
+                .with("combined", Json::round(score(&sel, Pick::Combined).rmse * 100.0, 4))
                 .with("followers", peers.len())
-                .with("followers_stale", Json::round(score(&peers, 0).rmse * 100.0, 4))
-                .with("followers_model", Json::round(score(&peers, MODEL_RUNG).rmse * 100.0, 4))
+                .with("followers_stale", Json::round(score(&peers, Pick::Stale).rmse * 100.0, 4))
+                .with("followers_model", Json::round(score(&peers, Pick::Model).rmse * 100.0, 4))
+                .with("followers_rule", Json::round(score(&peers, Pick::Rule).rmse * 100.0, 4))
+                .with("followers_combined", Json::round(score(&peers, Pick::Combined).rmse * 100.0, 4))
         })
         .collect::<Vec<_>>();
 
@@ -447,7 +627,24 @@ pub fn report(records: &[Record]) -> Json {
         .with("movers", ladder(&movers))
         .with("big_movers", ladder(&big_movers))
         .with("quiet", ladder(&quiet))
-        .with("ablations", ablations(&all))
+        .with("versus", Json::obj().with("all", versus(&all)).with("followers", versus(&followers)))
+        .with("lockstep", lockstep_report(&followers))
+        .with(
+            "combine",
+            Json::obj()
+                .with(
+                    "weights",
+                    Json::Arr(
+                        crate::engine::combine_weights(records)
+                            .into_iter()
+                            .map(|(ym, w)| Json::Arr(vec![Json::from(ym), Json::round(w, 4)]))
+                            .collect(),
+                    ),
+                )
+                .with("latest", Json::round(latest_weight(records), 4))
+                .with("min_forecasts", crate::engine::COMBINE_MIN),
+        )
+        .with("ablations", ablations(&all, &followers))
         .with("by_signal", by_signal(records))
         .with("books", book_report(records))
         .with("by_regime", by_regime)
@@ -458,14 +655,59 @@ pub fn report(records: &[Record]) -> Json {
 
 pub fn print_ladder(title: &str, records: &[&Record]) {
     println!("\n  {title}  (n = {})", records.len());
-    println!("  {:<46} {:>8} {:>8} {:>8}", "", "MAE", "RMSE", "skill");
-    for (k, (_, label)) in RUNGS.iter().enumerate() {
-        let s = score(records, k);
-        println!("  {:<46} {:>8.3} {:>8.3} {:>7.1}%", label, s.mae * 100.0, s.rmse * 100.0, s.skill * 100.0);
+    println!("  {:<52} {:>8} {:>8} {:>8}", "", "MAE", "RMSE", "skill");
+    for &(pick, _, label) in &RUNGS {
+        let s = score(records, pick);
+        println!("  {:<52} {:>8.3} {:>8.3} {:>7.1}%", label, s.mae * 100.0, s.rmse * 100.0, s.skill * 100.0);
     }
-    for (k, (_, label)) in ABLATIONS.iter().enumerate() {
-        let s = score(records, RUNGS.len() + k);
-        println!("  {:<46} {:>8.3} {:>8.3} {:>7.1}%   not adopted", label, s.mae * 100.0, s.rmse * 100.0, s.skill * 100.0);
+}
+
+pub fn print_rules(title: &str, records: &[&Record]) {
+    println!("\n  {title}  (n = {})", records.len());
+    println!(
+        "  {:<44} {:>7} {:>7} {:>7} {:>15} {:>7} {:>7} {:>7} {:>7}",
+        "", "MAE", "median", "skill", "90% interval", "capped", "closer", "further", "top 1%"
+    );
+    for &(pick, _, label) in &RULES {
+        let (s, r) = (score(records, pick), robust(records, pick));
+        let (lo, hi) = if pick == Pick::Stale { (0.0, 0.0) } else { interval(records, pick, Pick::Stale) };
+        println!(
+            "  {:<44} {:>7.3} {:>7.3} {:>6.1}% {:>6.1}% {:>6.1}% {:>6.1}% {:>6.1}% {:>6.1}% {:>6.1}%",
+            label,
+            s.mae * 100.0,
+            r.median_ae * 100.0,
+            s.skill * 100.0,
+            lo * 100.0,
+            hi * 100.0,
+            r.capped_skill * 100.0,
+            r.closer * 100.0,
+            r.further * 100.0,
+            r.top_share * 100.0
+        );
+    }
+    let (lo, hi) = interval(records, Pick::Model, Pick::Rule);
+    let d = score(records, Pick::Model).skill - score(records, Pick::Rule).skill;
+    println!("  model less rule: {:+.1} points of skill, 90% interval {:+.1} to {:+.1}", d * 100.0, lo * 100.0, hi * 100.0);
+}
+
+pub fn print_ablations(all: &[&Record], followers: &[&Record]) {
+    println!("\n  Ablation: each part removed from the model (or added to it), skill against the last mark");
+    println!("  {:<52} {:>8} {:>8} {:>8} {:>8}  {}", "", "all", "change", "peers", "change", "worth, 90% interval");
+    let (ma, mf) = (score(all, Pick::Model).skill, score(followers, Pick::Model).skill);
+    println!("  {:<52} {:>7.1}% {:>8} {:>7.1}% {:>8}", "The model", ma * 100.0, "", mf * 100.0, "");
+    for (pick, _, label, kind) in variants() {
+        let (a, f) = (score(all, pick).skill, score(followers, pick).skill);
+        let (lo, hi) = interval(all, Pick::Model, pick);
+        println!(
+            "  {:<52} {:>7.1}% {:>+7.1}p {:>7.1}% {:>+7.1}p  {:+.1} to {:+.1}",
+            format!("{} {}", if kind == "removed" { "Without:" } else { "With:" }, label.to_lowercase()),
+            a * 100.0,
+            (a - ma) * 100.0,
+            f * 100.0,
+            (f - mf) * 100.0,
+            lo * 100.0,
+            hi * 100.0
+        );
     }
 }
 
@@ -485,6 +727,11 @@ mod tests {
             public: (mean, sd),
             peers: (mean, sd),
             sector: (mean, sd),
+            parts: [mean; crate::engine::N_PARTS],
+            copy: f64::NAN,
+            rule: prev,
+            combined: mean,
+            lockstep: false,
             seen: 1,
             principal: 1.0,
             filed: 0,
@@ -560,9 +807,49 @@ mod tests {
     fn skill_is_relative_to_stale() {
         let rs = vec![rec(0, 0.95, 0.99, 0.96, 0.01), rec(0, 0.97, 0.99, 0.97, 0.01)];
         let refs: Vec<&Record> = rs.iter().collect();
-        let stale = score(&refs, 0);
-        let model = score(&refs, MODEL_RUNG);
+        let stale = score(&refs, Pick::Stale);
+        let model = score(&refs, Pick::Model);
         assert_eq!(stale.skill, 0.0);
         assert!(model.skill > 0.9 && model.rmse < stale.rmse);
+    }
+
+    #[test]
+    fn robust_counts_wins_losses_and_caps_large_errors() {
+        let rs = vec![rec(0, 0.90, 0.99, 0.91, 0.01), rec(0, 0.99, 0.99, 0.98, 0.01), rec(0, 0.99, 0.99, 0.99, 0.01)];
+        let refs: Vec<&Record> = rs.iter().collect();
+        let r = robust(&refs, Pick::Model);
+        assert!((r.closer - 1.0 / 3.0).abs() < 1e-12 && (r.further - 1.0 / 3.0).abs() < 1e-12);
+        let capped = 1.0 - (0.01f64.powi(2) + 0.01f64.powi(2)) / CAP.powi(2);
+        assert!((r.capped_skill - capped).abs() < 1e-9, "{} against {capped}", r.capped_skill);
+        assert!(r.top_share > 1.0, "one forecast carries more than the whole net gain");
+    }
+
+    #[test]
+    fn intervals_bracket_the_skill_and_vanish_for_identical_forecasts() {
+        let mut rng = Rng::new(3);
+        let rs: Vec<Record> = (0..400)
+            .map(|k| {
+                let mv = 0.03 * rng.normal();
+                Record { inst: k / 4, ..rec(0, 0.97 + mv, 0.97, 0.97 + 0.5 * mv, 0.01) }
+            })
+            .collect();
+        let refs: Vec<&Record> = rs.iter().collect();
+        let skill = score(&refs, Pick::Model).skill;
+        let (lo, hi) = interval(&refs, Pick::Model, Pick::Stale);
+        assert!(lo < skill && skill < hi, "{lo} {skill} {hi}");
+        assert!((skill - 0.75).abs() < 1e-9);
+        assert_eq!(interval(&refs, Pick::Model, Pick::Combined), (0.0, 0.0));
+    }
+
+    #[test]
+    fn every_variant_is_scored() {
+        let rs = vec![rec(0, 0.95, 0.99, 0.96, 0.01)];
+        let refs: Vec<&Record> = rs.iter().collect();
+        let report = ablations(&refs, &refs).to_string();
+        for (_, id, _, kind) in variants() {
+            assert!(report.contains(&format!("\"id\":\"{id}\"")), "{id} missing");
+            assert!(kind == "removed" || kind == "added");
+        }
+        assert_eq!(variants().len(), PARTS.len() + ADDITIONS.len());
     }
 }

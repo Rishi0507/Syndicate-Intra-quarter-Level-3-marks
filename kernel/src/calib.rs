@@ -42,6 +42,29 @@ pub struct Fit {
 
 pub const PHI_MAX: f64 = 0.6;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Part {
+    Lateness,
+    Distance,
+    Level,
+    Precision,
+    StressNoise,
+    Jumps,
+    Drift,
+    Spreads,
+}
+
+pub const PARTS: [(Part, &str, &str); 8] = [
+    (Part::Lateness, "lateness", "Late marking"),
+    (Part::Distance, "distance", "Standing distance from the other holders"),
+    (Part::Level, "level", "Each lender's level bias"),
+    (Part::Precision, "precision", "Each lender's own precision"),
+    (Part::StressNoise, "stress_noise", "Wider disagreement under stress"),
+    (Part::Jumps, "jumps", "Jump test on the first mark of a quarter"),
+    (Part::Drift, "drift", "Pull to par and drift"),
+    (Part::Spreads, "spreads", "Public credit spreads"),
+];
+
 impl Fit {
     pub fn without_lender_habits(&self) -> Fit {
         let mut f = self.clone();
@@ -49,6 +72,34 @@ impl Fit {
             fam.phi = 0.0;
         }
         f.carry = 0.0;
+        f
+    }
+
+    pub fn without(&self, part: Part) -> Fit {
+        let mut f = self.clone();
+        let d = &mut f.dynamics;
+        match part {
+            Part::Lateness => f.families.iter_mut().for_each(|fam| fam.phi = 0.0),
+            Part::Distance => f.carry = 0.0,
+            Part::Level => f.families.iter_mut().for_each(|fam| fam.bias = 0.0),
+            Part::Precision => {
+                let typical = f.diag.noise_median;
+                f.families.iter_mut().for_each(|fam| fam.noise = typical);
+            }
+            Part::StressNoise => d.noise1 = 0.0,
+            Part::Jumps => d.jump_prob = 0.0,
+            Part::Drift => {
+                d.pull = 0.0;
+                d.pull_up = 0.0;
+                d.drift0 = 0.0;
+                d.drift_s = 0.0;
+                d.drift1 = 0.0;
+            }
+            Part::Spreads => {
+                d.beta0 = 0.0;
+                d.beta1 = 0.0;
+            }
+        }
         f
     }
 }
@@ -696,5 +747,34 @@ mod tests {
         assert_eq!(quarter_end(crate::data::year_month(20240229)), 20240229);
         assert_eq!(quarter_end(crate::data::year_month(20230228)), 20230228);
         assert_eq!(quarter_end(crate::data::year_month(20251231) + 3), 20260331);
+    }
+
+    #[test]
+    fn removing_a_part_changes_only_that_part() {
+        let fit = Fit {
+            dynamics: Dynamics::from_slice(&[0.5, 0.2, 0.001, 0.01, 0.002, 0.0, 3.0, 0.99, 0.003, 0.0001, -0.001, 0.02, 0.02, 0.1, 0.98, 0.03, 0.004]),
+            phi_bar: 0.3,
+            carry: 0.7,
+            families: vec![
+                FamilyFit { phi: 0.3, bias: 0.002, noise: 0.004, n_moves: 0, n_overlap: 0 },
+                FamilyFit { phi: 0.1, bias: -0.001, noise: 0.002, n_moves: 0, n_overlap: 0 },
+            ],
+            diag: Diagnostics { noise_median: 0.003, ..Diagnostics::default() },
+        };
+        for (part, _, _) in PARTS {
+            let f = fit.without(part);
+            let changed = |a: bool| assert!(a, "{part:?}");
+            match part {
+                Part::Lateness => changed(f.families.iter().all(|x| x.phi == 0.0) && f.carry == 0.7),
+                Part::Distance => changed(f.carry == 0.0 && f.families[0].phi == 0.3),
+                Part::Level => changed(f.families.iter().all(|x| x.bias == 0.0) && f.families[0].noise == 0.004),
+                Part::Precision => changed(f.families.iter().all(|x| x.noise == 0.003)),
+                Part::StressNoise => changed(f.dynamics.noise1 == 0.0 && f.dynamics.jump_prob == 0.02),
+                Part::Jumps => changed(f.dynamics.jump_prob == 0.0 && f.dynamics.noise1 == 3.0),
+                Part::Drift => changed(f.dynamics.pull == 0.0 && f.dynamics.drift1 == 0.0 && f.dynamics.beta0 == 0.5),
+                Part::Spreads => changed(f.dynamics.beta0 == 0.0 && f.dynamics.beta1 == 0.0 && f.dynamics.pull == 0.003),
+            }
+            assert_eq!(f.phi_bar, fit.phi_bar, "{part:?}");
+        }
     }
 }

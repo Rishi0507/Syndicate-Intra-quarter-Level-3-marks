@@ -198,6 +198,21 @@ export function Method({ u }: { u: Universe }) {
             quarter, and the evidence page shows by how much. The same floors and multipliers are applied to the band around
             the value itself.
           </p>
+
+          <h3>Against a rule an analyst could apply by hand</h3>
+          <p>
+            Once another lender has filed a loan, there is a forecast that needs no model: move the lender's own last mark by the
+            change the other lenders reported, averaged over those who have filed,
+          </p>
+          <Tex block>{T`r = m_{\text{prev}} + \frac{1}{|P|} \sum_{j \in P} \big( m_{j,q} - m_{j,q-1} \big)`}</Tex>
+          <p>
+            It keeps each lender's standing distance whole, where the model lets a share of it fade. On loans already filed by
+            another lender the two do about equally well; the model's lead over all forecasts comes from loans no one else has
+            filed yet. Their errors differ, so the forecast shown for each mark moves the model toward the rule,{" "}
+            <Tex>{T`\hat m + w\,(r - \hat m)`}</Tex>, with <Tex>{T`w`}</Tex> fitted by least squares on earlier quarters'
+            forecasts only{u.meta.eval.combine ? `, ${u.meta.eval.combine.latest.toFixed(2)} on all of them` : ""}. The combination was added after
+            the comparison was first run, so the next quarter to be filed is its first clean test.
+          </p>
         </div>
       </section>
 
@@ -266,6 +281,11 @@ export function Method({ u }: { u: Universe }) {
             <li>
               Borrowers are matched across lenders by name and loan terms. The rules prefer leaving two names apart to merging two
               companies, so some shared loans are missed.
+            </li>
+            <li>
+              Where another lender has already filed, a one-line rule does as well as the model. Part of that success is shared
+              prices: on many loans a lender's mark has matched another holder's exactly, which points to a common quote or
+              valuation agent rather than independent views.
             </li>
             <li>
               Between marks, the calibrated band holds the true value a little less often than stated in the simulated market,

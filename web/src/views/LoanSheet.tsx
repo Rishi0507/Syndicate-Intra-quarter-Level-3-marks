@@ -148,8 +148,8 @@ export function LoanSheet({ u, kernel, loan }: { u: Universe; kernel: Kernel; lo
                   <tr key={k}>
                     <td>{u.meta.families[m.family].name}</td>
                     <td className="r">{fmtPrice(m.price)}</td>
-                    <td className="r">{m.late ? "–" : fmtPrice(m.peerMean)}</td>
-                    <td className="r">{m.late ? "–" : fmtSigned(m.price - m.peerMean)}</td>
+                    <td className="r">{m.late ? "–" : fmtPrice(m.combined)}</td>
+                    <td className="r">{m.late ? "–" : fmtSigned(m.price - m.combined)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -157,7 +157,8 @@ export function LoanSheet({ u, kernel, loan }: { u: Universe; kernel: Kernel; lo
           )}
           <p className="note" style={{ marginTop: 8 }}>
             {latest.length > 8 ? `The first 8 of ${latest.length} lenders. ` : ""}Each forecast was made the day before that lender
-            filed, from everything already public
+            filed, from everything already public. Where another lender had filed, the model is averaged with the lender's own last
+            mark moved by the other lenders' change, with a weight learned from earlier quarters
             {pending > 0 ? `. ${pending} ${pending === 1 ? "mark" : "marks"} of the following quarter ${pending === 1 ? "is" : "are"} not yet filed.` : "."}
           </p>
         </div>

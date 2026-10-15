@@ -60,38 +60,59 @@ every holder that has not. Syndicate is built on that structure; the name refers
 All results are out of sample. For each of ten quarters, from 2024 Q1 to 2026 Q2, the model is
 fitted on marks filed before the quarter ended and forecasts each mark of that quarter on the day
 before the lender files it. Forecasts are scored against the first-reported mark. Errors are in
-points, with par at 100.
+points, with par at 100. Every result is set against a rule an analyst could apply by hand with the
+same filings: move the lender's own last mark by the change the other lenders have reported.
+Intervals are 90%, from resampling whole loans.
 
-| Question                                                                 | Result                                                                              |
-| ------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| Another lender has already filed the loan (34,958 forecasts, 36% of all) | 56% of squared error removed against the last mark                                  |
-| A peer has filed and the estimate has moved a point or more (7,300)      | Mean absolute error falls from 3.46 to 1.94 points                                  |
-| Each lender's quarterly debt book change, called the day before it files | 34% of the squared change anticipated; direction right in 175 of 192                |
-| All forecasts (97,521)                                                   | 16% of squared error removed                                                        |
-| 90% bands, performing, watch-list and stressed loans                     | Hold 87.8%, 88.3% and 90.4%; 7% to 12% narrower than a naive band at equal coverage |
+| Squared error removed against the last mark                             | Model              | Simple rule | Combined |
+| ----------------------------------------------------------------------- | ------------------ | ----------- | -------- |
+| Another lender has already filed the loan (34,958 forecasts, 36% of all) | 56% (47% to 63%)   | 58%         | 60%      |
+| The same, on panels rebuilt as they stood at the time                    | 47%                | 47%         | 49%      |
+| All forecasts (97,521)                                                   | 16% (12% to 19%)   | 13%         | 17%      |
+| All forecasts, on panels rebuilt as they stood                           | 14%                | 11%         | 14%      |
 
-![Lenders page: each lender's quarterly book change, expected against reported](docs/books.jpg)
+| Other results                                                            | Result                                                                                                  |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| Each lender's quarterly debt book change, called the day before it files | 34% of the squared change anticipated (rule 26%); direction right for 175 of 192, against 170 for always calling a fall |
+| 90% bands, performing, watch-list and stressed loans                     | Hold 87.8%, 88.3% and 90.4%; 7% to 12% narrower than a naive band at equal coverage                    |
 
-- **The value is in other holders' marks.** Where no other lender has filed, the estimate stays
-  close to the lender's own last mark and adds little. Most forecasts are of this kind. When the
-  estimate has moved by less than a quarter of a point it is no better than the last mark; when it
-  has moved by three points or more it removes 37% of squared error.
+![Evidence page: the model against simple rules, with intervals](docs/rules.jpg)
+
+- **Where another lender has filed, a simple rule does as well as the model.** The model removes 1.6
+  points less squared error than the rule, with an interval of -3.7 to +0.5. Most of the value of
+  those forecasts is in the other lenders' marks rather than in the model. The two make different
+  errors, and moving the model toward the rule by a weight learned only from earlier quarters
+  removes 60%. That combination was added after the comparison was run, so its first clean test is
+  2026 Q3, filed from November 2026.
+- **The model's lead over all forecasts is in large moves.** It removes 2.3 points more squared error
+  than the rule (+1.4 to +3.2), because it also moves on loans no other lender has filed yet, and it
+  anticipates more of the change in lenders' books. On the typical forecast it is not ahead: the
+  rule has the lower mean and median error, and the 1% of forecasts the model improves most account
+  for more than all of its net gain.
+- **One part carries the model.** Without the standing distance between a lender and the other
+  holders, 13 of the 16 points of squared error removed are lost. Late marking, the jump test, wider
+  disagreement under stress and the pull to par add 0.7 to 2.7 points each. Each lender's level bias
+  and public credit spreads add nothing measurable.
+- **Shared prices flatter the headline.** On 13,473 of the 34,958 forecasts where another lender had
+  filed, the lender's marks of that loan had already matched another holder's exactly after a move,
+  a sign of a common quote or valuation agent. The model removes 72% of squared error there and 43%
+  elsewhere, where the rule removes 44%.
 - **The results survive a point-in-time rebuild.** Borrower matching and loan splitting use every
   filing in the panel. Rebuilding the panel for each quarter from rows filed by then lowers the
-  share of squared error removed from 16% to 14% overall, from 56% to 47% where another lender had
-  filed, and leaves the book-level result at 37%. The rebuilt figures are the ones to expect in
-  real time.
-- **Fresh data agrees.** 2026 Q2, mostly from reports filed in August 2026 and added after the
-  model and every cleaning rule were fixed, shows 15% of squared error removed across 11,215
-  forecasts, in line with earlier quarters.
+  model's share of squared error removed from 16% to 14% overall and from 56% to 47% where another
+  lender had filed. The rebuilt figures are the ones to expect in real time.
+- **Fresh data agrees, with a caveat.** 2026 Q2, mostly from reports filed in August 2026 and added
+  after the model and every cleaning rule were fixed, shows 15% of squared error removed across
+  11,215 forecasts, in line with earlier quarters. Where another lender had filed in that quarter,
+  the rule did better than the model, 56% against 46%.
 - **Restatements do not drive the results.** Of 92,861 marks that later filings repeat as
   comparatives, 0.7% change by more than a tenth of a point.
 
 ![Evidence page: the point-in-time audit, quarter by quarter](docs/audit.jpg)
 
-Full tables, including results by regime, by quarter and by realised move, the band comparison, the
-ablation of a tested component and the software verification on a synthetic market, are in
-[docs/results.md](docs/results.md).
+Full tables, including the comparison with simple rules, results by regime, by quarter and by
+realised move, the band comparison, the ablation of every part of the model and the software
+verification on a synthetic market, are in [docs/results.md](docs/results.md).
 
 ## What the filings show about lenders
 
@@ -232,7 +253,7 @@ docs/                  results, methodology, data, architecture and screenshots
 
 | Document                                     | Content                                                                                       |
 | -------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| [docs/results.md](docs/results.md)           | Every result with its table: accuracy, lender books, bands, audit, ablation, lender findings. |
+| [docs/results.md](docs/results.md)           | Every result with its table: simple rules, accuracy, lender books, bands, audit, ablation, lender findings. |
 | [docs/methodology.md](docs/methodology.md)   | The model, its estimation, what the marks identify, and the evaluation design.                |
 | [docs/data.md](docs/data.md)                 | Sources, the EDGAR fill, cleaning rules, borrower resolution and the panel schema.            |
 | [docs/architecture.md](docs/architecture.md) | Components, data flow, the static file contract, and how the build is verified.               |
@@ -241,6 +262,12 @@ docs/                  results, methodology, data, architecture and screenshots
 
 - **Consensus, not a traded price.** The estimate is where lenders would mark a loan without delay.
   Where every holder is too generous, so is the estimate.
+- **A simple rule matches the model where peers have filed.** On loans another lender has already
+  marked, moving the lender's last mark by the others' change does as well as the model. The model's
+  own contribution is on loans no one else has filed, where it is small, and in large moves.
+- **Shared prices.** On many shared loans a lender's mark has matched another holder's exactly,
+  which points to a common quote or valuation agent rather than independent views. Results on those
+  loans are much stronger than on the rest.
 - **Single-lender loans.** 12,426 of the 15,951 loans (78%) are held by one manager family over
   their whole life. For them the estimate is that lender's mark rolled forward, with a band that
   reflects it, and it adds little to the last mark.

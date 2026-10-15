@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Figure, Legend } from "../charts/base";
 import { Calibration, Columns, HBars, Lines } from "../charts/small";
 import { BRAND } from "../brand";
-import type { Rung, Universe } from "../lib/data";
+import type { Ablation, LockGroup, Rung, RuleRow, Universe, Versus } from "../lib/data";
 import { INFERRED, MUTED, RUNGS } from "../lib/color";
 import { fmtInt, fmtPct, fmtQuarter } from "../lib/format";
 
@@ -35,6 +35,176 @@ function Ladder({ rungs }: { rungs: Rung[] }) {
       }))}
       labelWidth={300}
     />
+  );
+}
+
+const signedPts = (x: number) => {
+  const v = Math.abs(x * 100).toFixed(1);
+  return v === "0.0" ? "0.0" : `${x > 0 ? "+" : "−"}${v}`;
+};
+const listOf = (xs: string[]) => (xs.length < 2 ? xs.join("") : `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`);
+const span = (lo: number, hi: number) => `${fmtPct(lo)} to ${fmtPct(hi)}`;
+
+function RuleTable({ v }: { v: Versus }) {
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table>
+        <thead>
+          <tr>
+            <th>Forecast</th>
+            <th className="r">MAE</th>
+            <th className="r">Median error</th>
+            <th className="r">Squared error removed</th>
+            <th className="r">90% interval</th>
+            <th className="r">Errors capped at 5 points</th>
+            <th className="r">Closer than the last mark</th>
+            <th className="r">Further</th>
+          </tr>
+        </thead>
+        <tbody>
+          {v.rows.map((r: RuleRow) => (
+            <tr key={r.id}>
+              <td>{r.label}</td>
+              <td className="r">{r.mae.toFixed(2)}</td>
+              <td className="r">{r.median_ae.toFixed(2)}</td>
+              <td className="r">{r.id === "stale" ? "" : fmtPct(r.skill, 1)}</td>
+              <td className="r">{r.id === "stale" ? "" : span(r.skill_lo, r.skill_hi)}</td>
+              <td className="r">{r.id === "stale" ? "" : fmtPct(r.capped_skill, 1)}</td>
+              <td className="r">{r.id === "stale" ? "" : fmtPct(r.closer)}</td>
+              <td className="r">{r.id === "stale" ? "" : fmtPct(r.further)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function verdict(v: Versus): string {
+  const d = v.model_less_rule;
+  const lo = v.model_less_rule_lo;
+  const hi = v.model_less_rule_hi;
+  const gap = `${signedPts(d)} points of squared error removed (90% interval ${signedPts(lo)} to ${signedPts(hi)})`;
+  if (lo > 0) {
+    return `The model is ahead of the rule by ${gap}.`;
+  }
+  if (hi < 0) {
+    return `The rule is ahead of the model: ${gap}.`;
+  }
+  return `The model and the rule cannot be told apart here: ${gap}.`;
+}
+
+function concentration(model: RuleRow | undefined): string {
+  if (!model || model.top_share == null || !Number.isFinite(model.top_share)) {
+    return "";
+  }
+  const top = model.top_share;
+  return ` The 1% of forecasts the model improved most account for ${fmtPct(top)} of its net gain${top > 1 ? ": the other 99%, taken together, are slightly worse than the last mark" : ""}.`;
+}
+
+function AblationTable({ rows, model, peers }: { rows: Ablation[]; model: number; peers: number }) {
+  return (
+    <div style={{ overflowX: "auto" }}>
+      <table>
+        <thead>
+          <tr>
+            <th>Variant</th>
+            <th className="r">Squared error removed, all forecasts</th>
+            <th className="r">Change</th>
+            <th className="r">90% interval of the change</th>
+            <th className="r">Another lender had filed</th>
+            <th className="r">Change</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>The model as fitted</td>
+            <td className="r">{fmtPct(model, 1)}</td>
+            <td className="r"></td>
+            <td className="r"></td>
+            <td className="r">{fmtPct(peers, 1)}</td>
+            <td className="r"></td>
+          </tr>
+          {rows.map((a) => (
+            <tr key={a.id}>
+              <td>
+                {a.kind === "removed" ? "Without" : "With"} {a.label.charAt(0).toLowerCase() + a.label.slice(1)}
+              </td>
+              <td className="r">{fmtPct(a.all.skill, 1)}</td>
+              <td className="r">{signedPts(a.skill_change)}</td>
+              <td className="r">
+                {signedPts(-a.worth_hi)} to {signedPts(-a.worth_lo)}
+              </td>
+              <td className="r">{fmtPct(a.followers.skill, 1)}</td>
+              <td className="r">{signedPts(a.followers_skill_change)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ablationReading(rows: Ablation[]): string {
+  const removed = rows.filter((a) => a.kind === "removed");
+  if (!removed.length) {
+    return "";
+  }
+  const helps = removed.filter((a) => a.worth_lo > 0).sort((a, b) => a.skill_change - b.skill_change);
+  const idle = removed.filter((a) => a.worth_lo <= 0 && a.worth_hi >= 0);
+  const hurts = removed.filter((a) => a.worth_hi < 0);
+  const name = (a: Ablation) => a.label.charAt(0).toLowerCase() + a.label.slice(1);
+  const parts: string[] = [];
+  if (helps.length) {
+    parts.push(
+      `${helps[0].label} carries the model: without it, ${fmtPct(-helps[0].skill_change, 0)} of squared error removed is lost, ${fmtPct(-helps[0].followers_skill_change, 0)} where another lender had filed.`,
+    );
+    if (helps.length > 1) {
+      const rest = helps.slice(1);
+      const gains = rest.map((a) => -a.skill_change * 100);
+      const range = `${Math.min(...gains).toFixed(1)} to ${Math.max(...gains).toFixed(1)}`;
+      parts.push(`${listOf(rest.map(name))} add ${range} points each.`.replace(/^./, (c) => c.toUpperCase()));
+    }
+  }
+  if (idle.length) {
+    parts.push(`${listOf(idle.map(name))} change nothing measurable on these quarters.`.replace(/^./, (c) => c.toUpperCase()));
+  }
+  if (hurts.length) {
+    parts.push(`Removing ${listOf(hurts.map(name))} would help slightly; the parts were fixed before this test and are left as they are.`);
+  }
+  return parts.join(" ");
+}
+
+function LockTable({ lock }: { lock: { lockstep: LockGroup; independent: LockGroup } }) {
+  const rows: [string, LockGroup][] = [
+    ["Marks have matched another lender's exactly before", lock.lockstep],
+    ["Marks have never matched exactly", lock.independent],
+  ];
+  return (
+    <table style={{ marginTop: 10 }}>
+      <thead>
+        <tr>
+          <th>Another lender had filed, and</th>
+          <th className="r">Forecasts</th>
+          <th className="r">Removed, model</th>
+          <th className="r">Removed, rule</th>
+          <th className="r">MAE, model</th>
+          <th className="r">MAE, rule</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map(([label, g]) => (
+          <tr key={label}>
+            <td>{label}</td>
+            <td className="r">{fmtInt(g.n)}</td>
+            <td className="r">{fmtPct(g.model_skill)}</td>
+            <td className="r">{fmtPct(g.rule_skill)}</td>
+            <td className="r">{g.model_mae.toFixed(2)}</td>
+            <td className="r">{g.rule_mae.toFixed(2)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -87,10 +257,16 @@ export function Evidence({ u }: { u: Universe }) {
     ...ev.by_regime.map((r) => ({ id: r.regime, label: cap(r.regime), rungs: r.ladder })),
   ];
   const [subset, setSubset] = useState("all");
+  const [against, setAgainst] = useState<"followers" | "all">("followers");
   const chosen = subsets.find((s) => s.id === subset)!;
   const model = ev.all[ev.all.length - 1];
   const followers = ev.followers[ev.followers.length - 1];
-  const signal = ev.by_signal[ev.by_signal.length - 1];
+  const versus = ev.versus;
+  const pick = (v: Versus | undefined, id: string) => v?.rows.find((r) => r.id === id);
+  const peerModel = pick(versus?.followers, "model");
+  const peerRule = pick(versus?.followers, "rule");
+  const peerCombined = pick(versus?.followers, "combined");
+  const allRule = pick(versus?.all, "rule");
   const bins = ev.by_signal.slice(0, -1);
   const perf = ev.coverage.find((c) => c.regime === "performing") ?? ev.coverage[0];
   const truthAll = u.meta.truth?.find((t) => t.label === "all");
@@ -112,6 +288,12 @@ export function Evidence({ u }: { u: Universe }) {
   const vintAll = pooled(both.map((q) => vintageOf(q.ym)!));
   const fullPeers = pooled(both.map((q) => ({ n: q.followers, stale: q.followers_stale, model: q.followers_model })));
   const vintPeers = pooled(both.map((q) => vintageOf(q.ym)!).map((v) => ({ n: v.followers, stale: v.followers_stale, model: v.followers_model })));
+  const vintRows = both.map((q) => vintageOf(q.ym)!);
+  const hasRule = vintRows.length > 0 && vintRows.every((v) => v.followers_rule != null && v.followers_combined != null);
+  const vintPeerRule = hasRule ? pooled(vintRows.map((v) => ({ n: v.followers, stale: v.followers_stale, model: v.followers_rule! }))) : NaN;
+  const vintPeerComb = hasRule ? pooled(vintRows.map((v) => ({ n: v.followers, stale: v.followers_stale, model: v.followers_combined! }))) : NaN;
+  const vintAllRule = hasRule ? pooled(vintRows.map((v) => ({ n: v.n, stale: v.stale, model: v.rule! }))) : NaN;
+  const vintAllComb = hasRule ? pooled(vintRows.map((v) => ({ n: v.n, stale: v.stale, model: v.combined! }))) : NaN;
   const fullSkills = ev.by_quarter.map((q) => 1 - (q.model / q.stale) ** 2);
   const vintSkills = ev.by_quarter.map((q) => vintageOf(q.ym)?.skill ?? NaN);
   const restated = facts && Number(facts.restated_compared) > 0 ? facts : null;
@@ -139,23 +321,21 @@ export function Evidence({ u }: { u: Universe }) {
             <span>When another lender had already filed on the loan</span>
             <b>{fmtPct(followers.skill)}</b>
             <em>
-              of squared error removed, {fmtInt(followers.n)} forecasts ({fmtPct(followers.n / ev.n)} of all)
+              of squared error removed{peerModel ? ` (90% interval ${span(peerModel.skill_lo, peerModel.skill_hi)})` : ""}, {fmtInt(followers.n)}{" "}
+              forecasts, {fmtPct(followers.n / ev.n)} of all.
+              {peerRule && peerCombined
+                ? ` The simple rule removes ${fmtPct(peerRule.skill)}; the model and the rule combined, ${fmtPct(peerCombined.skill)}.`
+                : ""}
             </em>
           </div>
-          {signal && signal.n > 0 && (
-            <div className="stat inset">
-              <span>A peer had filed and the estimate had moved a point or more</span>
-              <b>
-                {signal.stale_mae.toFixed(2)} → {signal.mae.toFixed(2)}
-              </b>
-              <em>typical error in points, last mark against {BRAND}, {fmtInt(signal.n)} forecasts</em>
-            </div>
-          )}
           <div className="stat inset">
             <span>All forecasts</span>
             <b>{fmtPct(model.skill)}</b>
             <em>
-              of squared error removed; where no peer has filed, the estimate stays close to the last mark
+              of squared error removed
+              {allRule && versus
+                ? `, against ${fmtPct(allRule.skill)} for the simple rule (difference ${signedPts(versus.all.model_less_rule)} points, 90% interval ${signedPts(versus.all.model_less_rule_lo)} to ${signedPts(versus.all.model_less_rule_hi)}). The lead comes from large moves on loans no other lender has filed yet${allRule.mae < model.mae ? "; on the typical forecast the rule is closer" : ""}.`
+                : "; where no peer has filed, the estimate stays close to the last mark."}
             </em>
           </div>
           <div className="stat inset">
@@ -174,6 +354,65 @@ export function Evidence({ u }: { u: Universe }) {
           )}
         </div>
       </section>
+
+      {versus && (
+        <section className="glass pane">
+          <header>
+            <h2>Against simple rules</h2>
+            <p className="lede">
+              A model is worth having only if it beats what an analyst could do by hand with the same filings. Two rules use the
+              same public marks: copy what the other lenders filed for the quarter, or move the lender's own last mark by the
+              change the other lenders reported. Every row is scored on the same forecasts. Intervals come from redrawing whole
+              loans 1,000 times, so a loan with many marks cannot dominate.
+            </p>
+          </header>
+          <div className="seg" role="group" aria-label="Which forecasts" style={{ marginBottom: 14 }}>
+            <button aria-pressed={against === "followers"} onClick={() => setAgainst("followers")}>
+              Another lender had filed
+            </button>
+            <button aria-pressed={against === "all"} onClick={() => setAgainst("all")}>
+              All forecasts
+            </button>
+          </div>
+          <Figure note="Squared error removed against carrying the lender's last mark forward, in percent. Longer bars are better.">
+            <HBars
+              rows={versus[against].rows
+                .filter((r) => r.id !== "stale")
+                .map((r, i) => ({
+                  label: r.label,
+                  value: Math.max(0, r.skill * 100),
+                  color: RUNGS[i + 1],
+                  tag: `${fmtPct(r.skill, 1)}  (${span(r.skill_lo, r.skill_hi)})`,
+                }))}
+              format={(v) => `${v.toFixed(0)}%`}
+              labelWidth={300}
+            />
+          </Figure>
+          <RuleTable v={versus[against]} />
+          <p className="note" style={{ marginTop: 12 }}>
+            {verdict(versus[against])}
+            {concentration(pick(versus[against], "model"))} Errors are in points; "closer" and "further" count forecasts more
+            than 0.05 points nearer to or further from the outcome than the last mark.
+          </p>
+          <p className="note" style={{ marginTop: 8 }}>
+            The combined forecast moves the model toward the rule by a weight learned each quarter from the earlier quarters
+            only{ev.combine ? ` (latest ${ev.combine.latest.toFixed(2)})` : ""}, and is used where another lender had filed. It was
+            added after this comparison was first run, so the next quarter to be filed is its first clean test.
+          </p>
+          {ev.lockstep && ev.lockstep.lockstep.n > 0 && (
+            <>
+              <h3 style={{ marginTop: 22 }}>Shared prices</h3>
+              <p className="note">
+                On {fmtInt(ev.lockstep.lockstep.n)} of the {fmtInt(followers.n)} forecasts where another lender had filed, the
+                lender's marks of that loan had already matched another holder's to within 0.05 points after a move. That points to
+                a shared price source, such as a dealer quote or a common valuation agent, rather than an independent view. The
+                flag uses only earlier quarters. Forecasts are much easier there, so the headline figure mixes two kinds of loan.
+              </p>
+              <LockTable lock={ev.lockstep} />
+            </>
+          )}
+        </section>
+      )}
 
       {bins.length > 0 && (
         <section className="glass pane">
@@ -204,6 +443,7 @@ export function Evidence({ u }: { u: Universe }) {
                     <th className="r">Forecasts</th>
                     <th className="r">MAE, last mark</th>
                     <th className="r">MAE, {BRAND}</th>
+                    <th className="r">MAE, rule</th>
                     <th className="r">Squared error removed</th>
                   </tr>
                 </thead>
@@ -214,6 +454,7 @@ export function Evidence({ u }: { u: Universe }) {
                       <td className="r">{fmtInt(b.n)}</td>
                       <td className="r">{b.stale_mae.toFixed(2)}</td>
                       <td className="r">{b.mae.toFixed(2)}</td>
+                      <td className="r">{b.rule_mae != null ? b.rule_mae.toFixed(2) : ""}</td>
                       <td className="r">{fmtPct(b.skill)}</td>
                     </tr>
                   ))}
@@ -247,15 +488,9 @@ export function Evidence({ u }: { u: Universe }) {
           {(subset === "movers" || subset === "big" || subset === "quiet") &&
             " Grouping by the move that actually happened favours whichever forecast predicted it: on marks that did not move, the last mark is right by construction. The grouping above, by what was known in advance, is the fair comparison."}
         </p>
-        {ev.ablations.length > 0 && (
-          <p className="note" style={{ marginTop: 8 }}>
-            Tested and not adopted:{" "}
-            {ev.ablations
-              .map((a) => `${a.label.charAt(0).toLowerCase()}${a.label.slice(1)} changes the error by ${(a.rmse_change * 100).toFixed(2)}%`)
-              .join("; ")}
-            . It helps in simulation, where sectors share shocks by design, and is left out of the model.
-          </p>
-        )}
+        <p className="note" style={{ marginTop: 8 }}>
+          The ladder adds sources of information in one order. The parts of the model are tested one at a time in the next section.
+        </p>
         <details style={{ marginTop: 14 }}>
           <summary className="note" style={{ cursor: "pointer" }}>
             Show as a table
@@ -282,6 +517,24 @@ export function Evidence({ u }: { u: Universe }) {
           </table>
         </details>
       </section>
+
+      {ev.ablations.length > 0 && ev.ablations[0].all && (
+        <section className="glass pane">
+          <header>
+            <h2>What each part of the model is worth</h2>
+            <p className="lede">
+              Each part is switched off in turn, with everything else left as fitted, and the backtest is run again on the same
+              forecasts. A negative change means the part helps. Sector repricing is the reverse test: a part that was tried,
+              added to the model.
+            </p>
+          </header>
+          <AblationTable rows={ev.ablations} model={model.skill} peers={followers.skill} />
+          <p className="note" style={{ marginTop: 12 }}>
+            {ablationReading(ev.ablations)} Sector repricing helps in the simulated market, where sectors share shocks by design,
+            and changes nothing on the filings, so the model leaves it out.
+          </p>
+        </section>
+      )}
 
       <section className="glass pane">
         <header>
@@ -334,6 +587,7 @@ export function Evidence({ u }: { u: Universe }) {
               x={ev.by_quarter.map((q) => q.ym)}
               series={[
                 { label: "Last mark carried forward", color: MUTED, values: ev.by_quarter.map((q) => q.stale) },
+                ...(ev.by_quarter[0]?.rule != null ? [{ label: "Simple rule", color: RUNGS[2], values: ev.by_quarter.map((q) => q.rule) }] : []),
                 { label: BRAND, color: INFERRED, values: ev.by_quarter.map((q) => q.model) },
               ]}
               xTicks={ev.by_quarter.filter((q) => q.ym % 12 === 2).map((q) => q.ym)}
@@ -379,15 +633,21 @@ export function Evidence({ u }: { u: Universe }) {
                   <b>
                     {fmtPct(fullPeers)} → {fmtPct(vintPeers)}
                   </b>
-                  <em>of squared error removed; the lower figure is the one to expect in real time</em>
+                  <em>
+                    of squared error removed; the lower figure is the one to expect in real time.
+                    {hasRule ? ` On the same panels the simple rule removes ${fmtPct(vintPeerRule)} and the combined forecast ${fmtPct(vintPeerComb)}.` : ""}
+                  </em>
                 </div>
               </>
             )}
             {last && (
               <div className="stat inset">
-                <span>{fmtQuarter(last.ym)}, added after the design was fixed</span>
+                <span>{fmtQuarter(last.ym)}, added after the model was fixed</span>
                 <b>{fmtPct(lastSkill)}</b>
-                <em>of squared error removed, {fmtInt(last.n)} forecasts from reports filed in August 2026</em>
+                <em>
+                  of squared error removed, {fmtInt(last.n)} forecasts from reports filed in August 2026. The comparison with simple
+                  rules and the combined forecast came later, so for them the next quarter is the first clean test.
+                </em>
               </div>
             )}
           </div>
@@ -405,6 +665,24 @@ export function Evidence({ u }: { u: Universe }) {
                 format={(v) => `${v.toFixed(0)}%`}
               />
             </Figure>
+          )}
+          {vintage && hasRule && (
+            <div style={{ marginTop: 26 }}>
+              <Figure
+                title="Another lender had filed, panel as it stood"
+                note={`Squared error removed in each quarter. Pooled: model ${fmtPct(vintPeers)}, simple rule ${fmtPct(vintPeerRule)}, combined ${fmtPct(vintPeerComb)}. Over all forecasts: model ${fmtPct(vintAll)}, rule ${fmtPct(vintAllRule)}, combined ${fmtPct(vintAllComb)}. The combination's weight in each quarter is learned from the earlier quarters' panels only; the first quarter has none and uses the model alone.`}
+              >
+                <Columns
+                  categories={vintRows.map((v) => fmtQuarter(v.ym).replace(" 20", " '"))}
+                  series={[
+                    { label: "Simple rule", color: MUTED, values: vintRows.map((v) => (v.followers_rule_skill ?? NaN) * 100) },
+                    { label: BRAND, color: INFERRED, values: vintRows.map((v) => v.followers_skill * 100) },
+                    { label: "Combined", color: RUNGS[4], values: vintRows.map((v) => (v.followers_combined_skill ?? NaN) * 100) },
+                  ]}
+                  format={(v) => `${v.toFixed(0)}%`}
+                />
+              </Figure>
+            </div>
           )}
         </section>
       )}

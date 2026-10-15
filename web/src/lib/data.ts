@@ -20,8 +20,51 @@ export interface Coverage {
   matched_naive_width90: number;
 }
 
-export interface Ablation extends Rung {
+export interface Score {
+  n: number;
+  mae: number;
+  rmse: number;
+  skill: number;
+}
+
+export interface Ablation {
+  id: string;
+  label: string;
+  kind: "removed" | "added";
+  all: Score;
+  followers: Score;
   rmse_change: number;
+  followers_rmse_change: number;
+  skill_change: number;
+  followers_skill_change: number;
+  worth_lo: number;
+  worth_hi: number;
+}
+
+export interface RuleRow extends Rung {
+  skill_lo: number;
+  skill_hi: number;
+  median_ae: number;
+  closer: number;
+  further: number;
+  capped_skill: number;
+  top_share: number | null;
+}
+
+export interface Versus {
+  rows: RuleRow[];
+  model_less_rule: number;
+  model_less_rule_lo: number;
+  model_less_rule_hi: number;
+}
+
+export interface LockGroup {
+  n: number;
+  stale_rmse: number;
+  model_skill: number;
+  rule_skill: number;
+  model_mae: number;
+  rule_mae: number;
 }
 
 export interface Signal {
@@ -32,6 +75,8 @@ export interface Signal {
   mae: number;
   rmse: number;
   skill: number;
+  rule_mae: number;
+  rule_skill: number;
 }
 
 export interface Evaluation {
@@ -43,11 +88,26 @@ export interface Evaluation {
   big_movers: Rung[];
   quiet: Rung[];
   ablations: Ablation[];
+  versus: { all: Versus; followers: Versus };
+  lockstep: { lockstep: LockGroup; independent: LockGroup };
+  combine: { weights: [number, number][]; latest: number; min_forecasts: number };
   by_signal: Signal[];
   books?: Books;
   by_regime: { regime: string; ladder: Rung[]; pit: number[] }[];
   coverage: Coverage[];
-  by_quarter: { ym: number; n: number; stale: number; model: number; followers: number; followers_stale: number; followers_model: number }[];
+  by_quarter: {
+    ym: number;
+    n: number;
+    stale: number;
+    model: number;
+    rule: number;
+    combined: number;
+    followers: number;
+    followers_stale: number;
+    followers_model: number;
+    followers_rule: number;
+    followers_combined: number;
+  }[];
   pit: number[];
 }
 
@@ -60,6 +120,10 @@ export interface BookScore {
   mean_abs_error: number;
   moved: number;
   direction_right: number;
+  rule_skill: number;
+  rule_direction_right: number;
+  fell: number;
+  majority_right: number;
 }
 
 export interface Books extends BookScore {
@@ -78,6 +142,15 @@ export interface Vintage {
   followers_stale: number;
   followers_model: number;
   followers_skill: number;
+  rule?: number;
+  rule_skill?: number;
+  followers_rule?: number;
+  followers_rule_skill?: number;
+  weight?: number;
+  combined?: number;
+  combined_skill?: number;
+  followers_combined?: number;
+  followers_combined_skill?: number;
 }
 
 export interface Audit {

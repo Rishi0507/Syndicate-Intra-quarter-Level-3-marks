@@ -146,9 +146,9 @@ that the browser calls directly.
 flowchart TB
     DATA["data.rs<br/>load panel"] --> CAL["calib.rs<br/>estimation"]
     DATA --> INS["insight.rs<br/>raw findings"]
-    CAL --> ENG["engine.rs<br/>two sweeps"]
+    CAL --> ENG["engine.rs<br/>sweeps, rules"]
     FIL["filter.rs<br/>state space"] --> ENG
-    ENG --> EVAL["eval.rs<br/>accuracy, bands"]
+    ENG --> EVAL["eval.rs<br/>accuracy, bands,<br/>ablation"]
     ENG --> TRUTH["truth.rs<br/>synthetic truth"]
     ENG --> EXP["export.rs<br/>static files"]
     FIL --> WAS["wasm.rs<br/>browser interface"]
@@ -200,12 +200,12 @@ A mark and the same lender's previous mark together measure the value now less a
 then, with only the fresh part of the disagreement as noise. Both values are in the state, so the
 update is an ordinary linear measurement and no additional state per lender is required.
 
-### Sector feed (ablation)
+### Sector feed (tested, not adopted)
 
 Loans are filtered independently, which keeps thousands of them tractable. The engine can restore a
-link between loans in the same sector with a second sweep. The backtest scores this as an ablation:
-it changes the forecast error on the filings by 0.01%, so the model the site uses filters each loan
-once and the second sweep is not run.
+link between loans in the same sector with a second sweep. The backtest scores this alongside the
+ablations: it changes the forecast error on the filings by 0.01%, so the model the site uses filters
+each loan once and the second sweep is not run.
 
 ```mermaid
 flowchart LR
@@ -230,12 +230,22 @@ flowchart TB
     CAL --> Q
 ```
 
+Each test quarter runs the filter eleven times on the same marks: the model, the model without
+lender habits, the model with the sector feed, and the model with each of eight parts removed
+(`calib::Part`). The engine also computes, for every forecast, two rules that need no model (the
+other lenders' marks of the quarter, and the lender's last mark moved by their change) from the
+marks public the day before the filing, and flags loans whose marks have matched another holder's
+exactly after an earlier move. After the last quarter, `engine::combine` sets the combined forecast,
+moving the model toward the rule by a weight fitted only on earlier quarters. `eval` scores every
+variant on the same forecasts, with 90% intervals from 1,000 draws of whole loans.
+
 ### Point-in-time audit
 
 Borrower matching, the splitting of loans into pieces and some cleaning rules use every filing in the
 panel. The audit rebuilds the panel for each test quarter from rows filed by then and repeats the
 backtest for that quarter alone. The export reads the results, and those of the restatement check
-made during ingest, into the site's audit section.
+made during ingest, into the site's audit section. It also scores the rule on each rebuilt quarter
+and combines it with the model, using a weight fitted on the earlier rebuilt quarters only.
 
 ```mermaid
 flowchart LR
@@ -349,6 +359,7 @@ download because it is written in the SEC's own file format.
 | Rust for the kernel, without dependencies  | One source compiles to native code for estimation and to a small WebAssembly module for the browser.                                                                                                                                |
 | Computation in the browser                 | Curves are recomputed from marks on demand, so the site ships marks rather than millions of daily points.                                                                                                                           |
 | A synthetic market in the real file format | The full pipeline can be tested without network access, and estimates can be scored against a known truth.                                                                                                                          |
+| Simple rules scored beside the model       | A model earns its place only by beating what an analyst could do by hand with the same filings. The rules are computed from the same public marks and scored on the same forecasts, with intervals that resample whole loans.                 |
 | Conservative entity resolution             | A false merge creates disagreement that does not exist. Missing a match costs less than inventing one.                                                                                                                              |
 | Three languages, joined by files           | Each language fits its stage: Go for streaming I/O, Rust for numerics that must run natively and in the browser, TypeScript for the interface. The boundaries are file formats, so each component can be rebuilt or replaced alone. |
 | Lender codes by default                    | The site describes statistical relationships between lenders' marks. Publishing them under codes avoids presenting named rankings of managers.                                                                                      |

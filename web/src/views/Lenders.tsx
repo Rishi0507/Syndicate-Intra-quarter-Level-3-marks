@@ -127,7 +127,12 @@ export function Lenders({ u }: { u: Universe }) {
               <b>
                 {fmtInt(bk.direction_right)} of {fmtInt(bk.moved)}
               </b>
-              <em>books that moved half a point or more were called the right way</em>
+              <em>
+                books that moved half a point or more were called the right way
+                {bk.majority_right != null
+                  ? `; ${fmtInt(bk.fell)} of them fell, so always calling a ${bk.fell * 2 >= bk.moved ? "fall" : "rise"} gets ${fmtInt(bk.majority_right)}`
+                  : ""}
+              </em>
             </div>
           )}
           <div className="stat inset">
@@ -235,6 +240,7 @@ export function Lenders({ u }: { u: Universe }) {
                     <th className="r">Books</th>
                     <th className="r">Change anticipated</th>
                     <th className="r">Direction right</th>
+                    <th className="r">Base rate</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -246,6 +252,7 @@ export function Lenders({ u }: { u: Universe }) {
                       <td className="r">
                         {fmtInt(r.direction_right)} of {fmtInt(r.moved)}
                       </td>
+                      <td className="r">{r.majority_right != null ? fmtInt(r.majority_right) : ""}</td>
                     </tr>
                   ))}
                   <tr>
@@ -257,13 +264,18 @@ export function Lenders({ u }: { u: Universe }) {
                     <td className="r">
                       {fmtInt(bk.direction_right)} of {fmtInt(bk.moved)}
                     </td>
+                    <td className="r">{bk.majority_right != null ? fmtInt(bk.majority_right) : ""}</td>
                   </tr>
                 </tbody>
               </table>
               <p className="note" style={{ marginTop: 10 }}>
                 Squared change anticipated is one less the ratio of squared errors to squared changes, against a forecast of no
                 change. Rolling each book forward with public spreads, the pull to par and each lender's own habits, without other
-                holders' marks, anticipates {fmtPct(bk.habits_skill)}. The typical book moved {bk.mean_abs_change.toFixed(2)} points
+                holders' marks, anticipates {fmtPct(bk.habits_skill)}.
+                {bk.rule_skill != null
+                  ? ` The simple rule, each loan's last mark moved by the other holders' change and left alone where no one else has filed, anticipates ${fmtPct(bk.rule_skill)} and calls the direction of ${fmtInt(bk.rule_direction_right)} books. Most books fell in these quarters: the base rate is the number of books called right by always calling the commoner direction, so the direction alone says little and the share of the change anticipated is the better guide.`
+                  : ""}{" "}
+                The typical book moved {bk.mean_abs_change.toFixed(2)} points
                 in a quarter and was called to within {bk.mean_abs_error.toFixed(2)}.
               </p>
             </div>

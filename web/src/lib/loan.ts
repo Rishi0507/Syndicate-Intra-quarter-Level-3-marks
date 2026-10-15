@@ -14,6 +14,8 @@ export interface LoanMark {
   publicSd: number;
   peerMean: number;
   peerSd: number;
+  rule: number;
+  combined: number;
   seen: number;
   late: boolean;
 }
@@ -124,8 +126,17 @@ export function computeLoan(u: Universe, kernel: Kernel, loan: number, prints: P
     end,
   });
 
+  const priceAt = new Map<string, number>();
+  rows.forEach((m, i) => priceAt.set(`${m.family}:${yms[i]}`, m.price));
+  const weight = u.meta.eval.combine?.latest ?? 0;
   const out: LoanMark[] = rows.map((m, i) => {
     const f = curve.forecasts.subarray(6 * i, 6 * i + 6);
+    const moves = rows.flatMap((p, j) => {
+      const before = priceAt.get(`${p.family}:${yms[j] - 3}`);
+      return p.family !== m.family && yms[j] === yms[i] && p.arrival < m.arrival && before !== undefined ? [p.price - before] : [];
+    });
+    const rule = Number.isFinite(m.prev) && moves.length ? m.prev + moves.reduce((a, b) => a + b, 0) / moves.length : m.prev;
+    const combined = f[4] > 0 && Number.isFinite(rule) ? f[2] + weight * (rule - f[2]) : f[2];
     return {
       family: m.family,
       asof: m.asof,
@@ -139,6 +150,8 @@ export function computeLoan(u: Universe, kernel: Kernel, loan: number, prints: P
       publicSd: f[1] * 100,
       peerMean: f[2] * 100,
       peerSd: f[3] * 100,
+      rule: rule * 100,
+      combined: combined * 100,
       seen: f[4],
       late: f[5] === 1,
     };

@@ -6,12 +6,14 @@ design is specified in [methodology.md](methodology.md#evaluation-design).
 
 Errors are in price points, with par at 100. "Squared error removed" is one less the ratio of the
 model's squared error to that of carrying the lender's last mark forward. A negative value means
-more squared error than the last mark.
+more squared error than the last mark. Intervals are 90%, from 1,000 draws of whole loans with
+replacement.
 
 ## Contents
 
 - [Design in brief](#design-in-brief)
 - [Accuracy by source of information](#accuracy-by-source-of-information)
+- [Against simple rules](#against-simple-rules)
 - [Accuracy by what was known in advance](#accuracy-by-what-was-known-in-advance)
 - [Accuracy by realised move](#accuracy-by-realised-move)
 - [Accuracy by regime](#accuracy-by-regime)
@@ -30,6 +32,8 @@ more squared error than the last mark.
 - Each mark of the quarter is forecast on the day before its lender files, from every mark public
   by then, including other lenders' marks of the same quarter.
 - The target is the first-reported mark. Later comparatives are not used.
+- Every forecast is also made by two rules that need no model, from the same public marks, and every
+  part of the model is removed in turn and scored on the same forecasts.
 
 ## Accuracy by source of information
 
@@ -57,7 +61,76 @@ Where another lender had already filed the loan (34,958 forecasts, 36% of the to
 - **Modelling each lender's habits restores parity** with the last mark. Before another lender has
   filed, little further information is available.
 - **Other lenders' marks carry the information.** Once another holder has filed, more than half of
-  the squared error is removed.
+  the squared error is removed. The next section shows that a simple rule using the same marks
+  removes as much.
+
+## Against simple rules
+
+A model is worth having only if it beats what an analyst could do by hand with the same filings.
+Two rules use the marks public the day before each filing: the other lenders' marks of the same
+quarter, and the lender's own last mark moved by the change the other lenders reported since the
+previous quarter. Where no other lender has filed, both rules keep the last mark. The combined
+forecast moves the model toward the second rule where another lender had filed, by a weight fitted
+on the earlier test quarters only.
+
+![Evidence page: the model against simple rules](rules.jpg)
+
+Where another lender had already filed (34,958 forecasts):
+
+| Forecast                                 |  MAE | Median error | Squared error removed | 90% interval | Errors capped at 5 points | Closer than the last mark | Further |
+| ---------------------------------------- | ---: | -----------: | --------------------: | -----------: | ------------------------: | ------------------------: | ------: |
+| Last mark carried forward                | 1.08 |         0.33 |                       |              |                           |                           |         |
+| Other lenders' marks of the same quarter | 0.98 |         0.28 |                    9% |  -14% to 28% |                       14% |                       44% |     42% |
+| Last mark moved by other lenders' change | 0.67 |         0.17 |                   58% |   48% to 65% |                       42% |                       45% |     27% |
+| The model                                | 0.71 |         0.21 |                   56% |   47% to 63% |                       38% |                       51% |     33% |
+| Model and rule combined                  | 0.67 |         0.19 |                   60% |   51% to 67% |                       42% |                       51% |     31% |
+
+All forecasts (97,521):
+
+| Forecast                                 |  MAE | Median error | Squared error removed | 90% interval | Errors capped at 5 points | Closer than the last mark | Further |
+| ---------------------------------------- | ---: | -----------: | --------------------: | -----------: | ------------------------: | ------------------------: | ------: |
+| Last mark carried forward                | 1.21 |         0.28 |                       |              |                           |                           |         |
+| Other lenders' marks of the same quarter | 1.18 |         0.26 |                    2% |    -3% to 7% |                        5% |                       16% |     15% |
+| Last mark moved by other lenders' change | 1.07 |         0.23 |                   13% |   10% to 17% |                       14% |                       16% |     10% |
+| The model                                | 1.10 |         0.26 |                   16% |   12% to 19% |                       10% |                       39% |     42% |
+| Model and rule combined                  | 1.09 |         0.25 |                   17% |   13% to 20% |                       12% |                       39% |     41% |
+
+"Closer" and "further" count forecasts more than 0.05 points nearer to or further from the outcome
+than the last mark.
+
+- **Where another lender had filed, the rule does as well as the model.** The model removes 1.6
+  points less squared error than the rule, with a 90% interval of -3.7 to +0.5 points, and has a
+  higher mean and median error. Copying the other lenders' marks outright does poorly, because a
+  lender's distance from the others persists.
+- **Over all forecasts, the model is ahead in squared error only.** It removes 2.3 points more than
+  the rule (+1.4 to +3.2), because it also moves on loans no other lender has filed yet. On the
+  typical forecast it is not ahead: the rule has a lower mean and median error, and removes more
+  squared error once errors are capped at 5 points (14% against 10%). The model ends further from
+  the outcome than the last mark slightly more often than closer.
+- **A few large moves carry squared error.** The 1% of forecasts the model improved most account for
+  123% of its net gain over all forecasts, and 95% where another lender had filed. Over all
+  forecasts, the other 99% are, taken together, slightly worse than the last mark.
+- **The combination helps where the two disagree.** Their errors differ, and the combined forecast
+  removes 60% where another lender had filed, against 56% and 58%. Its weight on the rule was 0 in
+  the first test quarter, which had nothing earlier to learn from, and between 0.42 and 0.52 after
+  that; fitted on all ten quarters it is 0.56, the value the site uses. The combination was added in
+  October 2026 after the comparison had been run, so its weights are out of sample but the decision
+  to add it is not. 2026 Q3, filed from November 2026, is its first clean test.
+
+### Shared prices
+
+A loan is flagged when, in an earlier quarter, the lender's mark moved by half a point or more and
+landed within 0.05 points of another holder's mark of the same loan. That points to a shared price
+source, such as a dealer quote or a common valuation agent, rather than an independent view. The flag
+uses only earlier quarters, so it does not select on the outcome.
+
+| Another lender had filed, and                           | Forecasts | Removed, model | Removed, rule | MAE, model | MAE, rule |
+| ------------------------------------------------------- | --------: | -------------: | ------------: | ---------: | --------: |
+| The lender's marks have matched another's exactly before |    13,473 |            72% |           74% |       0.57 |      0.47 |
+| They never have                                         |    21,485 |            43% |           44% |       0.80 |      0.80 |
+
+Nearly two in five peer-filed forecasts are on loans with shared prices, and they are much easier.
+On the others, the model removes 43% of squared error and the rule 44%.
 
 ## Accuracy by what was known in advance
 
@@ -65,17 +138,18 @@ Forecasts are grouped by how far the estimate had moved from the lender's own la
 the forecast was made. The grouping uses only information available at the time, so it is a fair
 comparison of the two forecasts.
 
-| Estimate had moved                                    | Forecasts | MAE, last mark | MAE, model | Squared error removed |
-| ----------------------------------------------------- | --------: | -------------: | ---------: | --------------------: |
-| Under 0.25 points                                     |    58,988 |           0.53 |       0.55 |                    0% |
-| 0.25 to 1 point                                       |    26,645 |           1.25 |       1.18 |                    1% |
-| 1 to 3 points                                         |     7,873 |           3.06 |       2.83 |                    7% |
-| 3 points or more                                      |     4,015 |           7.33 |       5.32 |                   37% |
-| A peer had filed and the estimate moved 1 point or more |   7,300 |           3.46 |       1.94 |                   60% |
+| Estimate had moved                                      | Forecasts | MAE, last mark | MAE, model | MAE, rule | Squared error removed, model | Removed, rule |
+| ------------------------------------------------------- | --------: | -------------: | ---------: | --------: | ---------------------------: | ------------: |
+| Under 0.25 points                                       |    58,988 |           0.53 |       0.55 |      0.54 |                           0% |            0% |
+| 0.25 to 1 point                                         |    26,645 |           1.25 |       1.18 |      1.18 |                           1% |            1% |
+| 1 to 3 points                                           |     7,873 |           3.06 |       2.83 |      2.69 |                           7% |            3% |
+| 3 points or more                                        |     4,015 |           7.33 |       5.32 |      4.88 |                          37% |           34% |
+| A peer had filed and the estimate moved 1 point or more |     7,300 |           3.46 |       1.94 |      1.71 |                          60% |           62% |
 
 Most of the time the estimate barely moves and is neither better nor worse than the last mark. When
 it moves, the move is informative, and it is most informative when it comes from another holder's
-filing.
+filing. The groups are set by the model's own estimate, so the rule is scored on the same forecasts:
+where the model moved by a point or more after a peer filed, the rule is closer on average.
 
 ![Evidence page: results grouped by what was known when each forecast was made](evidence.jpg)
 
@@ -132,9 +206,29 @@ from rows filed by 105 days after the quarter ended, and repeats the backtest fo
 | Pooled  |    97,521 |            3.94 |        3.61 |                 16% |                        14% |                    56% |                           47% |
 
 The first four columns are from the full panel. Pooled over the ten quarters, the panel as it stood
-removes 14% of squared error, and 47% where another lender had filed. Where a peer had filed and the
-estimate had moved a point or more, mean absolute error falls from 3.55 to 2.07 points. These are
-the figures to expect in real time.
+removes 14% of squared error, and 47% where another lender had filed. These are the figures to
+expect in real time.
+
+On the same rebuilt panels, the rule and the combined forecast compare as follows where another
+lender had filed. The combined forecast's weight in each quarter is fitted on the earlier quarters'
+rebuilt panels only.
+
+| Quarter | Model | Rule | Combined | Weight |
+| ------- | ----: | ---: | -------: | -----: |
+| 2024 Q1 |   20% |  16% |      20% |   0.00 |
+| 2024 Q2 |   49% |  49% |      52% |   0.41 |
+| 2024 Q3 |   21% |  13% |      22% |   0.48 |
+| 2024 Q4 |   58% |  54% |      59% |   0.42 |
+| 2025 Q1 |   45% |  54% |      52% |   0.39 |
+| 2025 Q2 |   -4% |   2% |       3% |   0.47 |
+| 2025 Q3 |   53% |  45% |      52% |   0.50 |
+| 2025 Q4 |   32% |  34% |      35% |   0.41 |
+| 2026 Q1 |   68% |  67% |      70% |   0.43 |
+| 2026 Q2 |   46% |  56% |      53% |   0.44 |
+| Pooled  |   47% |  47% |      49% |        |
+
+Over all forecasts on the rebuilt panels, the model removes 13.6% of squared error, the rule 11.0%
+and the combined forecast 14.2%.
 
 The gap is concentrated in a few early quarters and a few loans. In 2024 Q3, two loans account for
 43% of the squared error on peer-filed forecasts on the panel as it stood. In one, the full panel
@@ -151,25 +245,37 @@ quarter shows a gain.
 The cleaning rules, the model and its estimation steps were designed on filings made up to July
 2026. Reports filed in August 2026 were added afterwards from EDGAR without changing any rule. 2026
 Q2, mostly marked in those reports, removes 15% of squared error across 11,215 forecasts, in line
-with the earlier quarters.
+with the earlier quarters. Where another lender had filed in that quarter, the rule did better than
+the model: 56% against 46%.
+
+The comparison with simple rules, the ablations and the combined forecast were added in October
+2026, after all ten quarters had been scored. No part of the model was changed as a result. The
+combined forecast is new, and the next quarter to be filed is its first clean test.
 
 ## Lender books
 
 For each lender and quarter with 20 or more continuing loans, the principal-weighted change the
 model expected on the day before the lender filed is compared with the change it reported.
 
-| Book already marked by other holders | Lender-quarters | Squared change anticipated | Direction right, books that moved half a point or more |
-| ------------------------------------ | --------------: | -------------------------: | -------------------------------------------------------: |
-| Under 20%                            |             252 |                        19% |                                                 74 of 84 |
-| 20% to 40%                           |             167 |                        42% |                                                 51 of 55 |
-| 40% or more                          |             244 |                        53% |                                                 50 of 53 |
-| All                                  |             663 |                        34% |                                               175 of 192 |
+| Book already marked by other holders | Lender-quarters | Squared change anticipated | Rule | Direction right, books that moved half a point or more | Base rate |
+| ------------------------------------ | --------------: | -------------------------: | ---: | -------------------------------------------------------: | --------: |
+| Under 20%                            |             252 |                        19% |   4% |                                                 74 of 84 |        80 |
+| 20% to 40%                           |             167 |                        42% |  36% |                                                 51 of 55 |        49 |
+| 40% or more                          |             244 |                        53% |  57% |                                                 50 of 53 |        41 |
+| All                                  |             663 |                        34% |  26% |                                               175 of 192 |       170 |
 
+The base rate is the number of books called the right way by always calling the commoner
+direction. Books fell in 170 of the 192 cases, so the direction alone says little; the share of the
+change anticipated is the better guide.
+
+- The rule moves each loan's last mark by the other holders' change and leaves alone the loans no one
+  else has filed. It anticipates 26% of the squared change, and more than the model only for books
+  that other holders had already largely marked.
 - Without other holders' marks, rolling each book forward with public spreads, the pull to par and
   each lender's own habits anticipates 17%.
 - The typical book moved 0.50 points in a quarter and was called to within 0.39 points.
-- On the panels rebuilt as they stood, 37% of the squared change is anticipated and the direction is
-  right for 184 of 205 books.
+- On the panels rebuilt as they stood, 37% of the squared change is anticipated (rule 28%) and the
+  direction is right for 184 of 205 books, against a base rate of 182.
 
 ## Calibrated bands
 
@@ -190,14 +296,40 @@ rather than tuned away.
 
 ## Ablation
 
-| Component                            | Effect on RMSE, all forecasts | Status                                          |
-| ------------------------------------ | ----------------------------: | ----------------------------------------------- |
-| Sector repricing from other loans    |                        -0.01% | Not adopted. Helps in simulation only.          |
+Each part of the model is removed in turn, with every other parameter left as fitted, and the
+backtest is run again on the same forecasts. A negative change means the part helps. The interval
+is for the change over all forecasts.
 
-The component feeds each loan the precision-weighted surprises of other loans in its sector as they
-are filed. In the synthetic market, where sectors share shocks by construction, it removes a
-further 1.6 points of squared error. On the filings it changes nothing measurable, so the model
-leaves it out and the backtest continues to score it.
+![Evidence page: what each part of the model is worth](ablation.jpg)
+
+| Variant                                          | Squared error removed, all | Change | 90% interval of the change | Another lender had filed | Change |
+| ------------------------------------------------ | -------------------------: | -----: | -------------------------: | -----------------------: | -----: |
+| The model as fitted                              |                      15.7% |        |                            |                    56.2% |        |
+| Without late marking                             |                      13.0% |   -2.7 |               -3.6 to -1.8 |                    56.8% |   +0.6 |
+| Without standing distance from the other holders |                       2.6% |  -13.2 |             -15.9 to -10.7 |                    32.1% |  -24.1 |
+| Without each lender's level bias                 |                      15.7% |    0.0 |                0.0 to  0.0 |                    56.2% |    0.0 |
+| Without each lender's own precision              |                      16.0% |   +0.3 |               -0.1 to +0.8 |                    57.3% |   +1.1 |
+| Without wider disagreement under stress          |                      14.3% |   -1.4 |               -2.2 to -0.6 |                    51.4% |   -4.9 |
+| Without the jump test                            |                      14.1% |   -1.6 |               -2.2 to -0.9 |                    54.5% |   -1.7 |
+| Without pull to par and drift                    |                      15.0% |   -0.7 |               -1.1 to -0.4 |                    56.0% |   -0.3 |
+| Without public credit spreads                    |                      15.7% |   -0.1 |               -0.1 to  0.0 |                    56.2% |    0.0 |
+| With sector repricing from other loans           |                      15.8% |    0.0 |                0.0 to  0.0 |                    56.2% |    0.0 |
+
+- **The standing distance carries the model.** Without it, a lender's habitual distance from the
+  other holders is read as news, and the model loses most of its value. It is also what the rule
+  keeps whole.
+- **Late marking, the jump test, wider disagreement under stress and the pull to par** each add 0.7
+  to 2.7 points over all forecasts. Late marking helps on loans no one else has filed and costs a
+  little where another lender has.
+- **Each lender's level bias and public credit spreads** change nothing measurable. The fitted level
+  biases are small, a median of 0.07 points across lenders, and reach a forecast only through the
+  share of the standing distance that is expected to fade, so removing them moves forecasts by
+  hundredths of a point.
+- **Each lender's own precision** may hurt slightly; its interval includes zero.
+- **Sector repricing** feeds each loan the precision-weighted surprises of other loans in its sector
+  as they are filed. In the synthetic market, where sectors share shocks by construction, it removes
+  a further 1.6 points of squared error. On the filings it changes nothing measurable, so the model
+  leaves it out.
 
 ## What the filings show
 
@@ -243,6 +375,12 @@ correct. It does not show that the model describes real lenders.
 
 Against the true value between marks, the typical error is 0.52 points, against 0.72 for the stale
 marks a holder would otherwise use, and the 90% band holds the true value 89% of the time.
+
+The synthetic market is also a control for the comparison with simple rules. There, where marks are
+generated with the model's own structure, the model removes 87% of squared error where another
+lender had filed and the rule 84%, a lead of 3.4 points with a 90% interval of +2.7 to +4.3. The
+comparison can tell a model that adds information from one that does not; on the filings, the
+model's lead over the rule in those forecasts is not distinguishable from zero.
 
 ## Reproducing these results
 

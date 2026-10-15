@@ -245,8 +245,39 @@ The evaluation is built so that every forecast uses only information available w
   filings made up to July 2026. Reports filed in August 2026 were added afterwards from EDGAR, with
   no change to any rule. On 2026 Q2, mostly marked in those reports, the model removes
   15% of squared error across 11,215 forecasts.
-- **Ablations.** Components that were tested and not adopted are reported beside the model, with
-  their effect on the same forecasts.
+- **Simple rules.** Every forecast is also made by two rules that need no model, from the same
+  marks public the day before the filing: the other lenders' marks of the same quarter, and the
+  lender's own last mark moved by the change the other lenders reported. Where another lender had
+  filed, the second rule does as well as the model, so the model is credited only with what it adds
+  beyond it.
+- **Intervals.** Shares of squared error removed, and differences between forecasts, carry 90%
+  intervals from 1,000 draws of whole loans with replacement. A loan with many marks counts once per
+  draw, so a few loans cannot make a result look surer than it is.
+- **Robust summaries.** Squared error is dominated by a few large moves. Each forecast is also scored
+  by its median absolute error, by squared error with errors capped at 5 points, by the share of
+  forecasts closer to or further from the outcome than the last mark, and by the share of the net
+  gain that comes from the 1% of forecasts it improved most.
+- **Shared prices.** A loan is flagged when, in an earlier quarter, the lender's mark moved by half a
+  point or more and landed within 0.05 points of another holder's mark. That points to a common
+  quote or valuation agent. The flag uses only earlier quarters, so it can split the results without
+  selecting on the outcome.
+- **Ablations.** Each of eight parts of the model is removed in turn, with every other parameter
+  left as fitted, and the backtest is run again on the same forecasts. Sector repricing, tried and
+  not adopted, is scored the same way in reverse.
+- **Combined forecast.** Where another lender had filed, the model is moved toward the rule by a
+  weight fitted by least squares on the earlier test quarters' forecasts only, and set to zero
+  until 500 such forecasts exist. The combination was added in October 2026, after the comparison
+  with the rule had been run on all ten quarters. Its weights are out of sample; the decision to add
+  it is not, so 2026 Q3, filed from November 2026, is its first clean test.
+
+Against these checks the results read as follows. Where another lender had filed, the rule removes
+58% of squared error and the model 56%, a difference of -1.6 points with a 90% interval of -3.7 to
++0.5; on panels rebuilt as they stood both remove 47% and the combined forecast 49%. Over all
+forecasts the model is ahead of the rule by 2.3 points (+1.4 to +3.2) in squared error, from large
+moves on loans no other lender has filed, while the rule has the lower mean and median error. On
+loans with shared prices the model removes 72% where another lender had filed, and 43% elsewhere.
+The standing distance accounts for most of what the model adds: without it, 13 of the 16 points
+removed over all forecasts are lost. Every table is in [results.md](results.md).
 
 ## Lender books
 
@@ -264,10 +295,13 @@ average of the reported changes:
 ```
 
 The share of the squared change anticipated is $1 - \sum (\Delta - \hat\Delta)^2 / \sum \Delta^2$,
-against a forecast of no change. Across 663 lender-quarters it is 34%, and the
-direction is right for 175 of 192 books that moved half a point or more. On panels
-rebuilt as they stood at the time, the share is 37%. The share rises with the part of the
-book that other holders have already marked: 19% below 20% and 53% at 40% or more.
+against a forecast of no change. Across 663 lender-quarters it is 34%, against 26% for the rule
+that moves each loan's last mark by the other holders' change. The direction is right for 175 of
+192 books that moved half a point or more, but 170 of those books fell, so always calling a fall
+would get 170; the share of the change anticipated is the better measure. On panels rebuilt as they
+stood at the time, the share is 37% (rule 28%), and the direction is right for 184 of 205 against a
+base rate of 182. The share rises with the part of the book that other holders have already marked:
+19% below 20% and 53% at 40% or more.
 
 **Movement since the last filing.** On any day, the site reprices each lender's book by the
 principal-weighted move in the estimate of its loans between the day its latest filing was published
